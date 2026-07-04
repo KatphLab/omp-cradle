@@ -1,4 +1,3 @@
-import boundaries from 'eslint-plugin-boundaries'
 import regexpPlugin from 'eslint-plugin-regexp'
 import pluginSecurity from 'eslint-plugin-security'
 import sonarjs from 'eslint-plugin-sonarjs'
@@ -23,40 +22,11 @@ const eslintConfig = defineConfig([
       },
     },
     plugins: {
-      boundaries,
       'unused-imports': unusedImports,
     },
     linterOptions: {
       noInlineConfig: true,
       reportUnusedDisableDirectives: 'error',
-    },
-    settings: {
-      'boundaries/elements': [
-        {
-          type: 'tests',
-          pattern: 'src/**/__tests__/**',
-        },
-        {
-          type: 'lib',
-          pattern: 'src/lib/**',
-        },
-        {
-          type: 'utils',
-          pattern: 'src/utils/**',
-        },
-        {
-          type: 'config',
-          pattern: 'src/config/**',
-        },
-        {
-          type: 'types',
-          pattern: 'src/types/**',
-        },
-        {
-          type: 'entry',
-          pattern: 'src/index.ts',
-        },
-      ],
     },
     rules: {
       // Prefer TS-aware variants
@@ -118,34 +88,6 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/ban-ts-comment': 'error',
       // Script project rules
       'unused-imports/no-unused-imports': 'error',
-      'boundaries/dependencies': [
-        'error',
-        {
-          default: 'allow',
-          rules: [
-            {
-              from: { type: 'lib' },
-              disallow: { to: { type: 'tests' } },
-            },
-            {
-              from: { type: 'utils' },
-              disallow: { to: { type: 'tests' } },
-            },
-            {
-              from: { type: 'config' },
-              disallow: { to: { type: 'tests' } },
-            },
-            {
-              from: { type: 'types' },
-              disallow: { to: { type: 'tests' } },
-            },
-            {
-              from: { type: 'entry' },
-              allow: { to: { type: ['lib', 'utils', 'config', 'types'] } },
-            },
-          ],
-        },
-      ],
       'sonarjs/cognitive-complexity': ['error', 12],
       'sonarjs/aws-restricted-ip-admin-access': 'off',
       'no-console': ['error', { allow: ['warn', 'error'] }],
@@ -162,11 +104,6 @@ const eslintConfig = defineConfig([
       'no-restricted-syntax': [
         'error',
         {
-          selector: String.raw`ImportDeclaration[source.value=/^\.\./], ExportNamedDeclaration[source.value=/^\.\./], ExportAllDeclaration[source.value=/^\.\./]`,
-          message:
-            'Relative parent imports (../) are not allowed. Use path aliases (@lib/*, @utils/*, @config/*, @types/*) instead.',
-        },
-        {
           selector: 'ExportNamedDeclaration[source]',
           message: 'Do not create pass-through re-export files.',
         },
@@ -179,11 +116,6 @@ const eslintConfig = defineConfig([
             "TSTypeReference[typeName.name='ReturnType'] > TSTypeParameterInstantiation > TSTypeQuery > Identifier",
           message:
             'Do not use ReturnType<typeof fn> for local codebase functions. Define and export an explicit type instead.',
-        },
-        {
-          selector:
-            'CallExpression[callee.object.name=/^(it|test|describe)$/][callee.property.name=/^(skip|todo)$/]',
-          message: 'Do not leave skipped or todo tests.',
         },
       ],
       'unicorn/prevent-abbreviations': [
@@ -201,12 +133,7 @@ const eslintConfig = defineConfig([
             temp: true,
           },
 
-          ignore: [
-            // Test files
-            /\.test$/u,
-            /\.spec$/u,
-            /\.e2e$/u,
-          ],
+          ignore: [],
 
           checkProperties: false,
           checkShorthandProperties: false,
@@ -216,27 +143,13 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  {
-    files: ['**/*.test.ts'],
-    rules: {
-      'no-restricted-syntax': 'off',
-      'max-lines-per-function': 'off',
-      '@typescript-eslint/no-empty-function': 'off',
-      'unicorn/no-useless-undefined': 'off',
-    },
-  },
   globalIgnores([
     '.dependency-cruiser.js',
     '*.config.mjs',
     'eslint.config.mjs',
-    'dangerfile.ts',
     'dist/**',
-    'coverage/**',
     '.opencode/**',
     '.worktrees/**',
-    'vitest.config.ts',
-    'vitest.setup.ts',
-    'vitest.strict-reporter.ts',
   ]),
 ])
 

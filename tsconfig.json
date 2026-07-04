@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2024",
-    "lib": ["ES2024"],
+    "lib": ["ES2024", "DOM.AsyncIterable"],
     "types": ["node"],
     "allowJs": false,
     "skipLibCheck": true,
@@ -21,17 +21,11 @@
     "outDir": "dist",
     "rootDir": "src",
     "esModuleInterop": true,
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "esnext",
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
-    "isolatedModules": true,
-    "paths": {
-      "@lib/*": ["./src/lib/*"],
-      "@utils/*": ["./src/utils/*"],
-      "@config/*": ["./src/config/*"],
-      "@types/*": ["./src/types/*"]
-    }
+    "isolatedModules": true
   },
   "include": ["src/**/*.ts", "src/**/*.mts"],
-  "exclude": ["node_modules", "dist", "coverage", ".worktrees"]
+  "exclude": ["node_modules", "dist", ".worktrees"]
 }
