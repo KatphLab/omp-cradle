@@ -131,6 +131,12 @@ const eslintConfig = defineConfig([
             fn: true,
             Fn: true,
             temp: true,
+
+            ctx: true,
+            params: true,
+            Def: true,
+            msg: true,
+            opts: true,
           },
 
           ignore: [],

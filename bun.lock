@@ -26,6 +26,8 @@
         "typescript-eslint": "^8.58.1",
       },
       "peerDependencies": {
+        "@oh-my-pi/pi-ai": "*",
+        "@oh-my-pi/pi-catalog": "*",
         "@oh-my-pi/pi-coding-agent": "*",
       },
     },
