@@ -44,4 +44,4 @@
 ## oh-my-pi documentation
 
 - /home/lalit/github/oh-my-pi/docs/extensions.md
-- /home/lalit/github/oh-my-pi/src/extensibility/extensions
+- /home/lalit/github/oh-my-pi/packages/coding-agent/src/extensibility
