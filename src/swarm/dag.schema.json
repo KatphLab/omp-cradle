@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oh-my-pi.local/schemas/omp-swarm-dag.schema.json",
+  "title": "OMP Swarm DAG",
+  "description": "YAML schema for omp-swarm DAG files consumed by src/swarm/swarm/schema.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["swarm"],
+  "properties": {
+    "swarm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "workspace", "agents"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[\\w.-]+$",
+          "minLength": 1,
+          "description": "Swarm run name. Used for state directory names; letters, numbers, dot, underscore, and dash only."
+        },
+        "workspace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Workspace directory for the run. Relative paths resolve from the YAML file location."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["pipeline", "parallel", "sequential"],
+          "default": "sequential",
+          "description": "Execution strategy. target_count values greater than 1 are only valid with pipeline mode."
+        },
+        "target_count": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Number of pipeline targets/iterations. Only pipeline mode supports values greater than 1."
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "agents": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Map of agent id to agent definition. Agent ids are referenced by waits_for and reports_to.",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/agent"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "mode": {
+                    "not": {
+                      "const": "pipeline"
+                    }
+                  }
+                },
+                "required": ["mode"]
+              },
+              {
+                "not": {
+                  "required": ["mode"]
+                }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "target_count": {
+                "const": 1,
+                "description": "Non-pipeline modes only support target_count: 1."
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional model selector forwarded to the subagent executor, for example pi/smol, pi/slow, or provider/model-id."
+    },
+    "agentNameList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "List of agent ids. The runtime validates that each name exists and is not self-referential."
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "task"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Role text placed into the agent system prompt."
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Task instructions for the agent."
+        },
+        "extra_context": {
+          "type": "string",
+          "description": "Optional extra context appended to the agent system prompt."
+        },
+        "waits_for": {
+          "$ref": "#/$defs/agentNameList"
+        },
+        "reports_to": {
+          "$ref": "#/$defs/agentNameList"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        }
+      }
+    }
+  }
+}

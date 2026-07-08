@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2024",
     "lib": ["ES2024", "DOM.AsyncIterable"],
-    "types": ["node"],
+    "types": ["node", "bun"],
     "allowJs": false,
     "skipLibCheck": true,
     "strict": true,

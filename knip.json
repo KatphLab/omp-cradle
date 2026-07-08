@@ -1,5 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "tags": ["-lintignore"],
-  "entry": ["src/**/index.ts"]
+  "entry": ["src/**/index.ts", "src/swarm/cli.ts", "src/**/*.test.ts"]
 }
