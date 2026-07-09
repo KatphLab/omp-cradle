@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../dag.schema.json
+swarm:
+  name: sample-review-round-graph
+  workspace: ../../../.worktrees/swarm-review-round-standalone
+  mode: sequential
+  target_count: 1
+  model: pi/smol
+  concurrency: 1
+  nodes:
+    reviewer:
+      type: agent
+      role: reviewer
+      task: |
+        Create tracking, review/reports, and signals if needed.
+        If tracking/review-round.txt does not exist, write tracking/review-round.txt with exactly "1", write review/reports/review-round.md with exactly "changes requested", and write signals/review-loop.txt with exactly "CHANGES_REQUESTED".
+        If tracking/review-round.txt already exists, leave it unchanged, write review/reports/review-round.md with exactly "accepted", and write signals/review-loop.txt with exactly "ACCEPTED".

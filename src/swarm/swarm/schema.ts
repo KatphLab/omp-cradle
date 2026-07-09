@@ -1,42 +1,138 @@
+interface RawSwarmRestartPolicyConfig {
+  max_restarts?: unknown
+  max_restarts_per_target?: unknown
+  max_node_attempts?: unknown
+}
+
+interface RawSwarmNodeControlConfig {
+  signal?: unknown
+  allowed_restart_targets?: unknown
+}
+
 interface RawSwarmAgentConfig {
+  type?: unknown
   role?: unknown
   task?: unknown
   extra_context?: unknown
   reports_to?: unknown
   waits_for?: unknown
   model?: unknown
+  control?: unknown
+  [key: string]: unknown
 }
+
+interface RawSwarmBashConfig {
+  type?: unknown
+  command?: unknown
+  output_path?: unknown
+  cwd?: unknown
+  reports_to?: unknown
+  waits_for?: unknown
+  [key: string]: unknown
+}
+
+interface RawSwarmGraphRepeatConfig {
+  max_rounds?: unknown
+  stop_signal?: unknown
+  success_value?: unknown
+  continue_value?: unknown
+}
+
+interface RawSwarmGraphConfig {
+  type?: unknown
+  path?: unknown
+  waits_for?: unknown
+  reports_to?: unknown
+  repeat?: unknown
+  control?: unknown
+  [key: string]: unknown
+}
+
+type RawSwarmNodeConfig =
+  RawSwarmAgentConfig | RawSwarmBashConfig | RawSwarmGraphConfig
 
 interface RawSwarmConfig {
   name?: unknown
   workspace?: unknown
   mode?: unknown
   target_count?: unknown
+  concurrency?: unknown
   model?: unknown
-  agents?: unknown
+  restart_policy?: unknown
+  nodes?: unknown
 }
 
 type SwarmMode = 'pipeline' | 'parallel' | 'sequential'
 
-export interface SwarmAgent {
+interface SwarmRestartPolicy {
+  maxRestarts: number
+  maxRestartsPerTarget: number
+  maxNodeAttempts: number
+}
+
+export interface SwarmNodeControl {
+  signal: string
+  allowedRestartTargets: string[]
+}
+
+export type SwarmNodeType = 'agent' | 'bash' | 'graph'
+
+export interface SwarmNodeBase {
   name: string
+  type: SwarmNodeType
+  reportsTo: string[]
+  waitsFor: string[]
+}
+
+export interface SwarmAgent extends SwarmNodeBase {
+  type: 'agent'
   role: string
   task: string
   extraContext?: string
-  reportsTo: string[]
-  waitsFor: string[]
   model?: string
+  control?: SwarmNodeControl
 }
+
+export interface SwarmBashNode extends SwarmNodeBase {
+  type: 'bash'
+  command: string
+  outputPath: string
+  cwd?: string
+}
+
+export interface SwarmGraphRepeat {
+  maxRounds: number
+  stopSignal: string
+  successValue: string
+  continueValue: string
+}
+
+export interface SwarmGraphReference extends SwarmNodeBase {
+  type: 'graph'
+  path: string
+  repeat?: SwarmGraphRepeat
+  control?: SwarmNodeControl
+  resolvedPath?: string
+  definition?: SwarmDefinition
+}
+
+export type SwarmNode = SwarmAgent | SwarmBashNode | SwarmGraphReference
 
 export interface SwarmDefinition {
   name: string
   workspace: string
   mode: SwarmMode
   targetCount: number
+  concurrency: number
   model?: string
+  restartPolicy?: SwarmRestartPolicy
+  nodes: Map<string, SwarmNode>
+  nodeOrder: string[]
   agents: Map<string, SwarmAgent>
-  /** Preserves YAML declaration order for implicit pipeline sequencing. */
-  agentOrder: string[]
+  bashNodes: Map<string, SwarmBashNode>
+  graphs: Map<string, SwarmGraphReference>
+  sourcePath?: string
+  sourceDir?: string
 }
 
 const VALID_MODES: readonly SwarmMode[] = ['pipeline', 'parallel', 'sequential']
@@ -60,20 +156,31 @@ export function parseSwarmYaml(content: string): SwarmDefinition {
   }
 
   const mode = parseMode(swarm.mode)
-  const agentEntries = extractAgentEntries(swarm.agents)
-  const { agents, agentOrder } = parseAgents(agentEntries)
+  const { nodes, nodeOrder, agents, bashNodes, graphs } = parseNodes(
+    extractNodeEntries(swarm.nodes),
+  )
   const targetCount =
     typeof swarm.target_count === 'number' ? swarm.target_count : 1
+  if (typeof swarm.concurrency !== 'number') {
+    throw new TypeError('swarm.concurrency is required and must be a number')
+  }
   const swarmDefinition: SwarmDefinition = {
     name,
     workspace,
     mode,
     targetCount,
+    concurrency: swarm.concurrency,
+    nodes,
+    nodeOrder,
     agents,
-    agentOrder,
+    bashNodes,
+    graphs,
   }
   if (typeof swarm.model === 'string') {
     swarmDefinition.model = swarm.model.trim()
+  }
+  if (swarm.restart_policy !== undefined) {
+    swarmDefinition.restartPolicy = parseRestartPolicy(swarm.restart_policy)
   }
   return swarmDefinition
 }
@@ -103,59 +210,216 @@ function isSwarmMode(value: unknown): value is SwarmMode {
   return value === 'pipeline' || value === 'parallel' || value === 'sequential'
 }
 
-function extractAgentEntries(value: unknown): [string, RawSwarmAgentConfig][] {
-  if (!isRecord(value) || Object.keys(value).length === 0) {
-    throw new Error('swarm.agents must contain at least one agent')
+function extractNodeEntries(
+  value: unknown,
+): [string, Record<string, unknown>][] {
+  if (
+    value === undefined ||
+    !isRecord(value) ||
+    Object.keys(value).length === 0
+  ) {
+    throw new Error(
+      'swarm.nodes is required and must contain at least one node',
+    )
   }
 
   return Object.entries(value).map(([name, config]) => {
     if (!isRecord(config)) {
-      throw new Error(`Agent '${name}' must be an object`)
+      throw new Error(`Node '${name}' must be an object`)
     }
     return [name, config]
   })
 }
 
-function parseAgents(entries: [string, RawSwarmAgentConfig][]): {
+function parseNodes(entries: [string, RawSwarmNodeConfig][]): {
+  nodes: Map<string, SwarmNode>
+  nodeOrder: string[]
   agents: Map<string, SwarmAgent>
-  agentOrder: string[]
+  bashNodes: Map<string, SwarmBashNode>
+  graphs: Map<string, SwarmGraphReference>
 } {
-  const agentOrder: string[] = []
+  const nodes = new Map<string, SwarmNode>()
+  const nodeOrder: string[] = []
   const agents = new Map<string, SwarmAgent>()
+  const bashNodes = new Map<string, SwarmBashNode>()
+  const graphs = new Map<string, SwarmGraphReference>()
 
   for (const [name, config] of entries) {
-    const role = requireString(
-      config.role,
-      `Agent '${name}': 'role' is required`,
-    )
-    const task = requireString(
-      config.task,
-      `Agent '${name}': 'task' is required`,
-    )
-
-    agentOrder.push(name)
-    const agent: SwarmAgent = {
-      name,
-      role,
-      task: task.trim(),
-      reportsTo: stringArray(config.reports_to),
-      waitsFor: stringArray(config.waits_for),
-    }
-    if (typeof config.extra_context === 'string') {
-      agent.extraContext = config.extra_context.trim()
-    }
-    if (typeof config.model === 'string') {
-      agent.model = config.model.trim()
-    }
-    agents.set(name, agent)
+    const type = parseNodeType(name, config.type)
+    const node = parseNode(name, type, config)
+    nodes.set(name, node)
+    nodeOrder.push(name)
+    if (node.type === 'agent') agents.set(name, node)
+    else if (node.type === 'bash') bashNodes.set(name, node)
+    else graphs.set(name, node)
   }
 
-  return { agents, agentOrder }
+  return { nodes, nodeOrder, agents, bashNodes, graphs }
+}
+
+function parseNode(
+  name: string,
+  type: SwarmNodeType,
+  config: RawSwarmNodeConfig,
+): SwarmNode {
+  switch (type) {
+    case 'agent': {
+      return parseAgentNode(name, config)
+    }
+    case 'bash': {
+      return parseBashNode(name, config)
+    }
+    case 'graph': {
+      return parseGraphNode(name, config)
+    }
+  }
+}
+
+function parseNodeType(name: string, value: unknown): SwarmNodeType {
+  if (value === undefined) throw new Error(`Node '${name}': 'type' is required`)
+  if (isSwarmNodeType(value)) return value
+  throw new Error(`Node '${name}': 'type' must be one of agent, bash, graph`)
+}
+
+function isSwarmNodeType(value: unknown): value is SwarmNodeType {
+  return value === 'agent' || value === 'bash' || value === 'graph'
+}
+
+function parseAgentNode(name: string, config: RawSwarmAgentConfig): SwarmAgent {
+  const role = requireString(config.role, `Agent '${name}': 'role' is required`)
+  const task = requireString(config.task, `Agent '${name}': 'task' is required`)
+  const agent: SwarmAgent = {
+    name,
+    type: 'agent',
+    role,
+    task: task.trim(),
+    reportsTo: stringArray(config.reports_to),
+    waitsFor: stringArray(config.waits_for),
+  }
+  if (typeof config.extra_context === 'string') {
+    agent.extraContext = config.extra_context.trim()
+  }
+  if (typeof config.model === 'string') {
+    agent.model = config.model.trim()
+  }
+  if (config.control !== undefined) {
+    agent.control = parseNodeControl('Agent', name, config.control)
+  }
+  return agent
+}
+
+function parseBashNode(
+  name: string,
+  config: RawSwarmBashConfig,
+): SwarmBashNode {
+  const command = requireString(
+    config.command,
+    `Bash node '${name}': 'command' is required`,
+  ).trim()
+  const outputPath = requireString(
+    config.output_path,
+    `Bash node '${name}': 'output_path' is required`,
+  ).trim()
+  if (!isSafeRelativePath(outputPath)) {
+    throw new Error(
+      `Bash node '${name}' output_path must be a workspace-relative path without '..'`,
+    )
+  }
+  const bashNode: SwarmBashNode = {
+    name,
+    type: 'bash',
+    command,
+    outputPath,
+    reportsTo: stringArray(config.reports_to),
+    waitsFor: stringArray(config.waits_for),
+  }
+  if (typeof config.cwd === 'string') {
+    const cwd = config.cwd.trim()
+    if (!isSafeRelativePath(cwd)) {
+      throw new Error(
+        `Bash node '${name}' cwd must be a workspace-relative path without '..'`,
+      )
+    }
+    bashNode.cwd = cwd
+  }
+  return bashNode
+}
+
+function parseGraphNode(
+  name: string,
+  config: RawSwarmGraphConfig,
+): SwarmGraphReference {
+  const graph: SwarmGraphReference = {
+    name,
+    type: 'graph',
+    path: requireString(config.path, `Graph '${name}': 'path' is required`),
+    reportsTo: stringArray(config.reports_to),
+    waitsFor: stringArray(config.waits_for),
+  }
+  if (config.repeat !== undefined)
+    graph.repeat = parseGraphRepeat(name, config.repeat)
+  if (config.control !== undefined)
+    graph.control = parseNodeControl('Graph', name, config.control)
+  return graph
+}
+
+function parseRestartPolicy(value: unknown): SwarmRestartPolicy {
+  if (!isRecord(value))
+    throw new Error(`swarm.restart_policy must be an object`)
+  const config = value as RawSwarmRestartPolicyConfig
+  return {
+    maxRestarts: numberOrNaN(config.max_restarts),
+    maxRestartsPerTarget: numberOrNaN(config.max_restarts_per_target),
+    maxNodeAttempts: numberOrNaN(config.max_node_attempts),
+  }
+}
+
+function parseNodeControl(
+  label: 'Agent' | 'Graph',
+  name: string,
+  value: unknown,
+): SwarmNodeControl {
+  if (!isRecord(value))
+    throw new Error(`${label} '${name}': 'control' must be an object`)
+  const config = value as RawSwarmNodeControlConfig
+  return {
+    signal: typeof config.signal === 'string' ? config.signal.trim() : '',
+    allowedRestartTargets: stringArray(config.allowed_restart_targets),
+  }
+}
+
+function parseGraphRepeat(name: string, value: unknown): SwarmGraphRepeat {
+  if (!isRecord(value))
+    throw new Error(`Graph '${name}': 'repeat' must be an object`)
+  const config = value as RawSwarmGraphRepeatConfig
+  return {
+    maxRounds:
+      typeof config.max_rounds === 'number' ? config.max_rounds : Number.NaN,
+    stopSignal: requireString(
+      config.stop_signal,
+      `Graph '${name}': 'repeat.stop_signal' is required`,
+    ).trim(),
+    successValue: requireString(
+      config.success_value,
+      `Graph '${name}': 'repeat.success_value' is required`,
+    ).trim(),
+    continueValue: requireString(
+      config.continue_value,
+      `Graph '${name}': 'repeat.continue_value' is required`,
+    ).trim(),
+  }
+}
+
+function numberOrNaN(value: unknown): number {
+  return typeof value === 'number' ? value : Number.NaN
 }
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => typeof item === 'string')
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -166,11 +430,19 @@ export function validateSwarmDefinition(
   swarmDefinition: SwarmDefinition,
 ): string[] {
   const errors: string[] = []
-  const agentNames = new Set(swarmDefinition.agents.keys())
+  const nodeNames = new Set(swarmDefinition.nodes.keys())
 
   validateModel(swarmDefinition.model, 'swarm.model', errors)
-  validateAgentReferences(swarmDefinition, agentNames, errors)
+  validateRestartPolicy(swarmDefinition, errors)
+  validateNodeReferences(swarmDefinition, nodeNames, errors)
   validateTargetCount(swarmDefinition, errors)
+  validateConcurrency(swarmDefinition, errors)
+
+  for (const graph of swarmDefinition.graphs.values()) {
+    if (graph.definition !== undefined) {
+      errors.push(...validateSwarmDefinition(graph.definition))
+    }
+  }
 
   return errors
 }
@@ -185,27 +457,90 @@ function validateModel(
   }
 }
 
-function validateAgentReferences(
+function validateRestartPolicy(
   swarmDefinition: SwarmDefinition,
-  agentNames: Set<string>,
   errors: string[],
 ): void {
-  for (const [name, agent] of swarmDefinition.agents) {
+  const hasControl =
+    [...swarmDefinition.agents.values()].some(
+      (agent) => agent.control !== undefined,
+    ) ||
+    [...swarmDefinition.graphs.values()].some(
+      (graph) => graph.control !== undefined,
+    )
+  if (hasControl && swarmDefinition.restartPolicy === undefined) {
+    errors.push(
+      'swarm.restart_policy is required when any node declares control',
+    )
+  }
+
+  const policy = swarmDefinition.restartPolicy
+  if (policy === undefined) return
+  validatePositiveInteger(
+    policy.maxRestarts,
+    'swarm.restart_policy.max_restarts',
+    errors,
+  )
+  validatePositiveInteger(
+    policy.maxRestartsPerTarget,
+    'swarm.restart_policy.max_restarts_per_target',
+    errors,
+  )
+  validatePositiveInteger(
+    policy.maxNodeAttempts,
+    'swarm.restart_policy.max_node_attempts',
+    errors,
+  )
+}
+
+function validateConcurrency(
+  swarmDefinition: SwarmDefinition,
+  errors: string[],
+): void {
+  validatePositiveInteger(
+    swarmDefinition.concurrency,
+    'swarm.concurrency',
+    errors,
+  )
+}
+
+function validatePositiveInteger(
+  value: number,
+  label: string,
+  errors: string[],
+): void {
+  if (!Number.isInteger(value) || value < 1) {
+    errors.push(`${label} must be an integer greater than or equal to 1`)
+  }
+}
+
+function validateNodeReferences(
+  swarmDefinition: SwarmDefinition,
+  nodeNames: Set<string>,
+  errors: string[],
+): void {
+  for (const node of swarmDefinition.nodes.values()) {
     validateNamedReferences(
-      name,
+      node.name,
       'waits_for',
-      agent.waitsFor,
-      agentNames,
+      node.waitsFor,
+      nodeNames,
       errors,
     )
     validateNamedReferences(
-      name,
+      node.name,
       'reports_to',
-      agent.reportsTo,
-      agentNames,
+      node.reportsTo,
+      nodeNames,
       errors,
     )
-    validateModel(agent.model, `Agent '${name}' model`, errors)
+    if (node.type === 'agent') {
+      validateModel(node.model, `Agent '${node.name}' model`, errors)
+      validateControl('Agent', node.name, node.control, nodeNames, errors)
+    } else if (node.type === 'graph') {
+      validateRepeat(node.name, node, errors)
+      validateControl('Graph', node.name, node.control, nodeNames, errors)
+    }
   }
 }
 
@@ -213,19 +548,81 @@ function validateNamedReferences(
   name: string,
   field: 'reports_to' | 'waits_for',
   references: string[],
-  agentNames: Set<string>,
+  nodeNames: Set<string>,
   errors: string[],
 ): void {
   for (const reference of references) {
-    if (!agentNames.has(reference)) {
-      errors.push(`Agent '${name}' ${field} unknown agent '${reference}'`)
+    if (!nodeNames.has(reference)) {
+      errors.push(`Node '${name}' ${field} unknown node '${reference}'`)
     }
     if (reference === name) {
       errors.push(
-        `Agent '${name}' cannot ${field === 'waits_for' ? 'wait for' : 'report to'} itself`,
+        `Node '${name}' cannot ${field === 'waits_for' ? 'wait for' : 'report to'} itself`,
       )
     }
   }
+}
+
+function validateRepeat(
+  name: string,
+  graph: SwarmGraphReference,
+  errors: string[],
+): void {
+  if (graph.repeat === undefined) return
+  if (!Number.isInteger(graph.repeat.maxRounds) || graph.repeat.maxRounds < 1) {
+    errors.push(
+      `Graph '${name}' repeat.max_rounds must be an integer greater than or equal to 1`,
+    )
+  }
+  if (!isSafeRelativePath(graph.repeat.stopSignal)) {
+    errors.push(
+      `Graph '${name}' repeat.stop_signal must be a workspace-relative path without '..'`,
+    )
+  }
+  if (graph.repeat.successValue.trim().length === 0) {
+    errors.push(`Graph '${name}' repeat.success_value must not be empty`)
+  }
+  if (graph.repeat.continueValue.trim().length === 0) {
+    errors.push(`Graph '${name}' repeat.continue_value must not be empty`)
+  }
+  if (graph.definition !== undefined && graph.definition.targetCount !== 1) {
+    errors.push(
+      `Graph '${name}' repeat requires imported graph target_count: 1`,
+    )
+  }
+}
+
+function validateControl(
+  label: 'Agent' | 'Graph',
+  name: string,
+  control: SwarmNodeControl | undefined,
+  nodeNames: Set<string>,
+  errors: string[],
+): void {
+  if (control === undefined) return
+  if (!isSafeRelativePath(control.signal)) {
+    errors.push(
+      `${label} '${name}' control.signal must be a workspace-relative path without '..'`,
+    )
+  }
+  if (control.allowedRestartTargets.length === 0) {
+    errors.push(
+      `${label} '${name}' control.allowed_restart_targets must contain at least one node`,
+    )
+  }
+  for (const target of control.allowedRestartTargets) {
+    if (!nodeNames.has(target)) {
+      errors.push(
+        `${label} '${name}' control.allowed_restart_targets unknown node '${target}'`,
+      )
+    }
+  }
+}
+
+export function isSafeRelativePath(value: string): boolean {
+  if (value.trim().length === 0) return false
+  if (value.startsWith('/')) return false
+  return !value.split(/[\\/]+/).includes('..')
 }
 
 function validateTargetCount(

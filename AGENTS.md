@@ -23,6 +23,7 @@
 - Add or update dependencies only when existing repo modules cannot solve the problem cleanly.
 - For each dependency change, include rationale plus security and license impact in the PR or commit.
 - If a change affects public behavior, workflow, configuration, or contributor expectations, update docs in the same change set.
+- Do not write tests, tests in this repo are useless. instead test real behavior.
 
 ## Verification
 

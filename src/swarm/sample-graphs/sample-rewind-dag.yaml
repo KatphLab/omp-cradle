@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=../dag.schema.json
+swarm:
+  name: sample-rewind-dag
+  workspace: ../../../.worktrees/swarm-rewind-dag
+  mode: sequential
+  target_count: 1
+  model: pi/smol
+  concurrency: 2
+  restart_policy:
+    max_restarts: 2
+    max_restarts_per_target: 2
+    max_node_attempts: 3
+  nodes:
+    build:
+      type: agent
+      role: sample-file-writer
+      task: |
+        Smoke test only. In the swarm workspace, create directories signals,
+        tracking, reports, and output. Append exactly this line to
+        tracking/executions.txt: build
+        Write reports/build.md with exactly "build ok". If
+        tracking/review-requested-rewind.txt does not exist, create that marker
+        with exactly REQUESTED and write signals/review.control.yaml with exactly:
+        action: restart
+        target: build
+        reason: "sample forces review to restart build once"
+        If tracking/review-requested-rewind.txt already exists, write
+        signals/review.control.yaml with exactly:
+        action: continue
+        reason: "sample rewind accepted"
+      reports_to: [review]
+
+    review:
+      type: agent
+      role: sample-reviewer
+      task: |
+        Smoke test only. In the swarm workspace, read reports/build.md and
+        signals/review.control.yaml. Append exactly this line to
+        tracking/executions.txt: review
+        Write reports/review.md with exactly "review ok".
+      waits_for: [build]
+      reports_to: [final]
+      control:
+        signal: signals/review.control.yaml
+        allowed_restart_targets: [build]
+
+    final:
+      type: agent
+      role: sample-finalizer
+      task: |
+        Smoke test only. In the swarm workspace, read signals/review.control.yaml.
+        Append exactly this line to tracking/executions.txt: final
+        Write output/final.md with exactly done.
+      waits_for: [review]

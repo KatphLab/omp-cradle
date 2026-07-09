@@ -10,74 +10,53 @@
     "swarm": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "workspace", "agents"],
+      "required": ["name", "workspace", "concurrency", "nodes"],
       "properties": {
         "name": {
           "type": "string",
           "pattern": "^[\\w.-]+$",
-          "minLength": 1,
-          "description": "Swarm run name. Used for state directory names; letters, numbers, dot, underscore, and dash only."
+          "description": "Swarm name used for state directory naming."
         },
         "workspace": {
           "type": "string",
           "minLength": 1,
-          "description": "Workspace directory for the run. Relative paths resolve from the YAML file location."
+          "description": "Workspace directory. Relative paths resolve from the YAML file location."
         },
         "mode": {
           "type": "string",
           "enum": ["pipeline", "parallel", "sequential"],
-          "default": "sequential",
-          "description": "Execution strategy. target_count values greater than 1 are only valid with pipeline mode."
+          "default": "sequential"
         },
         "target_count": {
           "type": "integer",
           "minimum": 1,
           "default": 1,
-          "description": "Number of pipeline targets/iterations. Only pipeline mode supports values greater than 1."
+          "description": "Number of full-DAG iterations. Only valid with mode: pipeline."
         },
-        "model": {
-          "$ref": "#/$defs/model"
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of agent nodes that may run at once across this DAG and any subgraphs. Bash nodes do not count toward this limit."
         },
-        "agents": {
+        "model": { "$ref": "#/$defs/model" },
+        "restart_policy": { "$ref": "#/$defs/restartPolicy" },
+        "nodes": {
           "type": "object",
           "minProperties": 1,
-          "description": "Map of agent id to agent definition. Agent ids are referenced by waits_for and reports_to.",
-          "propertyNames": {
-            "type": "string",
-            "minLength": 1
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/agent"
-          }
+          "additionalProperties": { "$ref": "#/$defs/node" }
         }
       },
       "allOf": [
         {
           "if": {
-            "anyOf": [
-              {
-                "properties": {
-                  "mode": {
-                    "not": {
-                      "const": "pipeline"
-                    }
-                  }
-                },
-                "required": ["mode"]
-              },
-              {
-                "not": {
-                  "required": ["mode"]
-                }
-              }
-            ]
+            "properties": {
+              "mode": { "not": { "const": "pipeline" } }
+            },
+            "required": ["target_count"]
           },
           "then": {
             "properties": {
-              "target_count": {
-                "const": 1,
-                "description": "Non-pipeline modes only support target_count: 1."
-              }
+              "target_count": { "const": 1 }
             }
           }
         }
@@ -90,7 +69,7 @@
       "minLength": 1,
       "description": "Optional model selector forwarded to the subagent executor, for example pi/smol, pi/slow, or provider/model-id."
     },
-    "agentNameList": {
+    "nodeNameList": {
       "type": "array",
       "items": {
         "type": "string",
@@ -98,36 +77,110 @@
       },
       "uniqueItems": true,
       "default": [],
-      "description": "List of agent ids. The runtime validates that each name exists and is not self-referential."
+      "description": "List of local typed node ids. The runtime validates that each name exists and is not self-referential."
     },
-    "agent": {
+    "restartPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "task"],
+      "required": [
+        "max_restarts",
+        "max_restarts_per_target",
+        "max_node_attempts"
+      ],
       "properties": {
+        "max_restarts": { "type": "integer", "minimum": 1 },
+        "max_restarts_per_target": { "type": "integer", "minimum": 1 },
+        "max_node_attempts": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "nodeControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signal", "allowed_restart_targets"],
+      "properties": {
+        "signal": { "type": "string", "minLength": 1 },
+        "allowed_restart_targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "node": {
+      "oneOf": [
+        { "$ref": "#/$defs/agentNode" },
+        { "$ref": "#/$defs/bashNode" },
+        { "$ref": "#/$defs/graphNode" }
+      ]
+    },
+    "agentNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "role", "task"],
+      "properties": {
+        "type": { "const": "agent" },
         "role": {
           "type": "string",
-          "minLength": 1,
-          "description": "Role text placed into the agent system prompt."
+          "minLength": 1
         },
         "task": {
           "type": "string",
-          "minLength": 1,
-          "description": "Task instructions for the agent."
+          "minLength": 1
         },
         "extra_context": {
+          "type": "string"
+        },
+        "waits_for": { "$ref": "#/$defs/nodeNameList" },
+        "reports_to": { "$ref": "#/$defs/nodeNameList" },
+        "model": { "$ref": "#/$defs/model" },
+        "control": { "$ref": "#/$defs/nodeControl" }
+      }
+    },
+    "bashNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "command", "output_path"],
+      "properties": {
+        "type": { "const": "bash" },
+        "command": { "type": "string", "minLength": 1 },
+        "output_path": { "type": "string", "minLength": 1 },
+        "cwd": { "type": "string", "minLength": 1 },
+        "waits_for": { "$ref": "#/$defs/nodeNameList" },
+        "reports_to": { "$ref": "#/$defs/nodeNameList" }
+      }
+    },
+    "graphNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path"],
+      "properties": {
+        "type": { "const": "graph" },
+        "path": {
           "type": "string",
-          "description": "Optional extra context appended to the agent system prompt."
+          "minLength": 1,
+          "description": "Graph YAML path. Relative paths resolve from the YAML file that declares this graph."
         },
-        "waits_for": {
-          "$ref": "#/$defs/agentNameList"
-        },
-        "reports_to": {
-          "$ref": "#/$defs/agentNameList"
-        },
-        "model": {
-          "$ref": "#/$defs/model"
-        }
+        "waits_for": { "$ref": "#/$defs/nodeNameList" },
+        "reports_to": { "$ref": "#/$defs/nodeNameList" },
+        "repeat": { "$ref": "#/$defs/graphRepeat" },
+        "control": { "$ref": "#/$defs/nodeControl" }
+      }
+    },
+    "graphRepeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_rounds",
+        "stop_signal",
+        "success_value",
+        "continue_value"
+      ],
+      "properties": {
+        "max_rounds": { "type": "integer", "minimum": 1 },
+        "stop_signal": { "type": "string", "minLength": 1 },
+        "success_value": { "type": "string", "minLength": 1 },
+        "continue_value": { "type": "string", "minLength": 1 }
       }
     }
   }

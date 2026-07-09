@@ -86,6 +86,7 @@ const eslintConfig = defineConfig([
       ],
       '@typescript-eslint/prefer-readonly': 'error',
       '@typescript-eslint/ban-ts-comment': 'error',
+      '@typescript-eslint/no-base-to-string': 'error',
       // Script project rules
       'unused-imports/no-unused-imports': 'error',
       'sonarjs/cognitive-complexity': ['error', 12],

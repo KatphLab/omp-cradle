@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=../dag.schema.json
+swarm:
+  name: sample-composed-dag
+  workspace: ../../../.worktrees/swarm-composed-dag
+  mode: parallel
+  target_count: 1
+  model: pi/smol
+  concurrency: 2
+  nodes:
+    planner:
+      type: agent
+      role: planner
+      task: |
+        Create directories signals, tracking, output, implementation/reports, review/reports, and reports if needed.
+        Write reports/planner.md with exactly "planner ok".
+        Write signals/planner.txt with exactly "OK".
+      reports_to: [implementation, check_feedback]
+
+    check_feedback:
+      type: bash
+      command: >-
+        bun --eval "console.log('lint failed: missing semicolon'); process.exit(2)"
+      output_path: reports/check-feedback.txt
+      waits_for: [planner]
+      reports_to: [consume_feedback]
+
+    consume_feedback:
+      type: bash
+      command: >-
+        bun --eval "const text = await Bun.file('reports/check-feedback.txt').text(); if (!text.includes('lint failed')) process.exit(1); console.log('consumed failing-check feedback')"
+      output_path: reports/consume-feedback.txt
+      waits_for: [check_feedback]
+      reports_to: [retry_check]
+
+    retry_check:
+      type: bash
+      command: >-
+        bun --eval "const text = await Bun.file('reports/consume-feedback.txt').text(); if (!text.includes('consumed')) process.exit(1); console.log('retry passed after feedback')"
+      output_path: reports/retry-check.txt
+      waits_for: [consume_feedback]
+      reports_to: [review_loop]
+
+    implementation:
+      type: graph
+      path: ./implementation.yaml
+      waits_for: [planner]
+      reports_to: [review_loop]
+
+    review_loop:
+      type: graph
+      path: ./review-round.yaml
+      waits_for: [implementation, retry_check]
+      reports_to: [integrator]
+      repeat:
+        max_rounds: 2
+        stop_signal: signals/review-loop.txt
+        success_value: ACCEPTED
+        continue_value: CHANGES_REQUESTED
+
+    integrator:
+      type: agent
+      role: integrator
+      task: |
+        Read signals/planner.txt, signals/implementation.txt, signals/review-loop.txt, and reports/retry-check.txt.
+        If every signal is OK or ACCEPTED as appropriate and retry-check contains feedback, write output/final.md with exactly "done".
+        Write signals/integrator.txt with exactly "OK".
+      waits_for: [review_loop]

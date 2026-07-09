@@ -1,28 +1,25 @@
-/**
- * Swarm Extension — Multi-agent pipeline orchestration from YAML definitions.
- */
-
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from '@oh-my-pi/pi-coding-agent'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
-import {
-  buildDependencyGraph,
-  buildExecutionWaves,
-  detectCycles,
-} from './swarm/dag'
 import { formatDuration } from './swarm/format'
+import { loadSwarmDefinitionFile } from './swarm/loader'
 import type { PipelineResult } from './swarm/pipeline'
 import { PipelineController } from './swarm/pipeline'
-import { renderSwarmProgress } from './swarm/render'
 import {
-  parseSwarmYaml,
-  type SwarmDefinition,
-  validateSwarmDefinition,
-} from './swarm/schema'
-import { StateTracker } from './swarm/state'
+  buildValidatedExecutionWaves,
+  preflightSwarmDefinition,
+} from './swarm/preflight'
+import { renderSwarmProgress } from './swarm/render'
+import type { SwarmDefinition } from './swarm/schema'
+import type { AgentState, BashNodeState, GraphState } from './swarm/state'
+import {
+  createInitializedStateTracker,
+  createRestartStateTracker,
+  StateTracker,
+} from './swarm/state'
 
 export default function swarmExtension(pi: ExtensionAPI): void {
   pi.setLabel('Swarm Orchestrator')
@@ -30,7 +27,7 @@ export default function swarmExtension(pi: ExtensionAPI): void {
   pi.registerCommand('swarm', {
     description: 'Run a multi-agent swarm pipeline from YAML',
     getArgumentCompletions: (prefix) => {
-      const subcommands = ['run', 'status', 'help']
+      const subcommands = ['run', 'restart', 'status', 'help']
       if (!prefix)
         return subcommands.map((subcommand) => ({
           label: subcommand,
@@ -54,6 +51,18 @@ export default function swarmExtension(pi: ExtensionAPI): void {
           await handleRun(yamlPath, ctx, pi)
           return
         }
+        case 'restart': {
+          const yamlPath = parts[1]
+          if (!yamlPath) {
+            ctx.ui.notify(
+              'Usage: /swarm restart <path/to/pipeline.yaml>',
+              'error',
+            )
+            return
+          }
+          await handleRestart(yamlPath, ctx, pi)
+          return
+        }
         case 'status': {
           await handleStatus(parts[1], ctx)
           return
@@ -72,6 +81,7 @@ function showHelp(ctx: ExtensionCommandContext): void {
       'Swarm — multi-agent pipeline orchestrator',
       '',
       '  /swarm run <file.yaml>     Run a pipeline',
+      '  /swarm restart <file.yaml> Restart from prior state, or start fresh when no state exists',
       '  /swarm status [name]       Show pipeline status',
       '  /swarm help                Show this help',
     ].join('\n'),
@@ -79,35 +89,108 @@ function showHelp(ctx: ExtensionCommandContext): void {
   )
 }
 
+interface SwarmRunContext {
+  swarmDefinition: SwarmDefinition
+  waves: string[][]
+  workspace: string
+}
+
 async function handleRun(
   yamlPath: string,
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
+  const swarmContext = await loadSwarmRunContext(yamlPath, ctx)
+  if (swarmContext === undefined) return
+  const { swarmDefinition, waves, workspace } = swarmContext
+
+  const stateTracker = await createInitializedStateTracker(
+    workspace,
+    swarmDefinition,
+  )
+
+  await runSwarmWithState(
+    swarmDefinition,
+    waves,
+    workspace,
+    stateTracker,
+    ctx,
+    pi,
+  )
+}
+
+async function handleRestart(
+  yamlPath: string,
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+): Promise<void> {
+  const swarmContext = await loadSwarmRunContext(yamlPath, ctx)
+  if (swarmContext === undefined) return
+  const { swarmDefinition, waves, workspace } = swarmContext
+
+  let restartPlan
+  try {
+    restartPlan = await createRestartStateTracker(workspace, swarmDefinition)
+  } catch (error_) {
+    const error = error_ instanceof Error ? error_ : new Error(String(error_))
+    ctx.ui.notify(error.message, 'error')
+    return
+  }
+  ctx.ui.notify(restartPlan.message, 'info')
+  if (restartPlan.alreadyCompleted) {
+    ctx.ui.notify(
+      renderSwarmProgress(restartPlan.stateTracker.state).join('\n'),
+      'info',
+    )
+    return
+  }
+
+  await runSwarmWithState(
+    swarmDefinition,
+    waves,
+    workspace,
+    restartPlan.stateTracker,
+    ctx,
+    pi,
+    {
+      startIteration: restartPlan.startIteration,
+      settledNodes: restartPlan.settledNodes,
+    },
+  )
+}
+
+async function loadSwarmRunContext(
+  yamlPath: string,
+  ctx: ExtensionCommandContext,
+): Promise<SwarmRunContext | undefined> {
   const resolvedPath = path.isAbsolute(yamlPath)
     ? yamlPath
     : path.resolve(ctx.cwd, yamlPath)
   const swarmDefinition = await loadSwarmDefinition(resolvedPath, ctx)
-  if (swarmDefinition === undefined) return
+  if (swarmDefinition === undefined) return undefined
 
   const waves = buildValidatedWaves(swarmDefinition, ctx)
-  if (waves === undefined) return
+  if (waves === undefined) return undefined
 
   const workspace = path.isAbsolute(swarmDefinition.workspace)
     ? swarmDefinition.workspace
     : path.resolve(path.dirname(resolvedPath), swarmDefinition.workspace)
   await fs.mkdir(workspace, { recursive: true })
+  return { swarmDefinition, waves, workspace }
+}
 
-  const stateTracker = new StateTracker(workspace, swarmDefinition.name)
-  await stateTracker.init(
-    [...swarmDefinition.agents.keys()],
-    swarmDefinition.targetCount,
-    swarmDefinition.mode,
-  )
-
+async function runSwarmWithState(
+  swarmDefinition: SwarmDefinition,
+  waves: string[][],
+  workspace: string,
+  stateTracker: StateTracker,
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+  resume?: { startIteration: number; settledNodes: readonly string[] },
+): Promise<void> {
   logStart(pi, swarmDefinition, waves, workspace)
   ctx.ui.notify(
-    `Starting swarm '${swarmDefinition.name}': ${swarmDefinition.agents.size} agents, ${waves.length} waves, ${swarmDefinition.targetCount} iteration(s)`,
+    `Starting swarm '${swarmDefinition.name}': ${swarmDefinition.nodes.size} nodes, ${swarmDefinition.agents.size} agents, ${swarmDefinition.bashNodes.size} bash, ${swarmDefinition.graphs.size} graphs, ${waves.length} waves, ${swarmDefinition.targetCount} iteration(s)`,
     'info',
   )
 
@@ -127,6 +210,7 @@ async function handleRun(
     onProgress: () => {
       updateWidget()
     },
+    ...(resume === undefined ? {} : { resume }),
     modelRegistry: ctx.modelRegistry,
     settings: pi.pi.settings,
   })
@@ -143,16 +227,8 @@ async function loadSwarmDefinition(
   resolvedPath: string,
   ctx: ExtensionCommandContext,
 ): Promise<SwarmDefinition | undefined> {
-  let content: string
   try {
-    content = await fs.readFile(resolvedPath, 'utf8')
-  } catch {
-    ctx.ui.notify(`Cannot read file: ${resolvedPath}`, 'error')
-    return undefined
-  }
-
-  try {
-    return parseSwarmYaml(content)
+    return await loadSwarmDefinitionFile(resolvedPath)
   } catch (error) {
     ctx.ui.notify(
       `YAML error: ${error instanceof Error ? error.message : String(error)}`,
@@ -166,23 +242,20 @@ function buildValidatedWaves(
   swarmDefinition: SwarmDefinition,
   ctx: ExtensionCommandContext,
 ): string[][] | undefined {
-  const validationErrors = validateSwarmDefinition(swarmDefinition)
+  const validationErrors = preflightSwarmDefinition(swarmDefinition)
   if (validationErrors.length > 0) {
     const messages = validationErrors.map((error) => `  - ${error}`).join('\n')
     ctx.ui.notify(`Validation errors:\n${messages}`, 'error')
     return undefined
   }
 
-  const dependencies = buildDependencyGraph(swarmDefinition)
-  const cycleNodes = detectCycles(dependencies)
-  if (cycleNodes) {
-    ctx.ui.notify(
-      `Cycle detected in agent dependencies: [${cycleNodes.join(', ')}]`,
-      'error',
-    )
+  try {
+    return buildValidatedExecutionWaves(swarmDefinition)
+  } catch (error_) {
+    const error = error_ instanceof Error ? error_.message : String(error_)
+    ctx.ui.notify(error, 'error')
     return undefined
   }
-  return buildExecutionWaves(dependencies)
 }
 
 function logStart(
@@ -191,14 +264,20 @@ function logStart(
   waves: string[][],
   workspace: string,
 ): void {
+  const nodeList = [...swarmDefinition.nodes.keys()].join(', ')
   const agentList = [...swarmDefinition.agents.keys()].join(', ')
+  const bashList = [...swarmDefinition.bashNodes.keys()].join(', ')
+  const graphList = [...swarmDefinition.graphs.keys()].join(', ')
   const waveDescription = waves
     .map((wave, index) => `wave ${index + 1}: [${wave.join(', ')}]`)
     .join('; ')
   pi.logger.debug('Swarm starting', {
     name: swarmDefinition.name,
     mode: swarmDefinition.mode,
+    nodes: nodeList,
     agents: agentList,
+    bash: bashList,
+    graphs: graphList,
     waves: waveDescription,
     workspace,
   })
@@ -218,6 +297,10 @@ function notifySummary(
   const summaryParts = [
     `Swarm '${swarmDefinition.name}' ${result.status}`,
     `${result.iterations}/${swarmDefinition.targetCount} iterations`,
+    `${swarmDefinition.nodes.size} nodes`,
+    `${swarmDefinition.agents.size} agents`,
+    `${swarmDefinition.bashNodes.size} bash`,
+    `${swarmDefinition.graphs.size} graphs`,
     `elapsed: ${elapsed}`,
   ]
 
@@ -256,6 +339,10 @@ function sendSummary(
         swarmName: swarmDefinition.name,
         status: result.status,
         iterations: result.iterations,
+        nodeCount: swarmDefinition.nodes.size,
+        agentCount: swarmDefinition.agents.size,
+        bashNodeCount: swarmDefinition.bashNodes.size,
+        graphCount: swarmDefinition.graphs.size,
         errorCount: result.errors.length,
       },
     },
@@ -291,36 +378,120 @@ function buildSummaryMessage(
   stateTracker: StateTracker,
   workspace: string,
 ): string {
-  const lines = [
+  return [
+    ...buildSummaryHeader(swarmDefinition, result, stateTracker, workspace),
+    ...buildAgentSummaryLines(stateTracker.state.agents),
+    ...buildBashSummaryLines(stateTracker.state.bashNodes),
+    ...buildGraphSummaryLines(stateTracker.state.graphs),
+    ...buildErrorSummaryLines(result.errors),
+  ].join('\n')
+}
+
+function buildSummaryHeader(
+  swarmDefinition: SwarmDefinition,
+  result: PipelineResult,
+  stateTracker: StateTracker,
+  workspace: string,
+): string[] {
+  return [
     `## Swarm Pipeline: ${swarmDefinition.name}`,
     '',
     `- **Status**: ${result.status}`,
     `- **Mode**: ${swarmDefinition.mode}`,
     `- **Iterations**: ${result.iterations}/${swarmDefinition.targetCount}`,
+    `- **Nodes**: ${swarmDefinition.nodes.size}`,
+    `- **Agents**: ${swarmDefinition.agents.size}`,
+    `- **Bash**: ${swarmDefinition.bashNodes.size}`,
+    `- **Graphs**: ${swarmDefinition.graphs.size}`,
+    `- **Restarts**: ${stateTracker.state.restartCount}`,
     `- **Workspace**: ${workspace}`,
     `- **State dir**: ${stateTracker.swarmDir}`,
     '',
+  ]
+}
+
+function buildAgentSummaryLines(agents: Record<string, AgentState>): string[] {
+  return [
     '### Agent Results',
     '',
+    ...Object.entries(agents).map(([name, agent]) =>
+      renderAgentSummary(name, agent),
+    ),
   ]
+}
 
-  for (const [name, agent] of Object.entries(stateTracker.state.agents)) {
-    const duration =
-      agent.startedAt && agent.completedAt
-        ? formatDuration(agent.completedAt - agent.startedAt)
-        : 'n/a'
-    const errorSuffix = agent.error ? ` — ${agent.error}` : ''
-    lines.push(`- **${name}**: ${agent.status} (${duration})${errorSuffix}`)
-  }
+function buildBashSummaryLines(
+  bashNodes: Record<string, BashNodeState>,
+): string[] {
+  const entries = Object.entries(bashNodes)
+  if (entries.length === 0) return []
+  return [
+    '',
+    '### Bash Results',
+    '',
+    ...entries.map(([name, bashNode]) => renderBashSummary(name, bashNode)),
+  ]
+}
 
-  if (result.errors.length > 0) {
-    lines.push(
-      '',
-      '### Errors',
-      '',
-      ...result.errors.map((error) => `- ${error}`),
-    )
-  }
+function buildGraphSummaryLines(graphs: Record<string, GraphState>): string[] {
+  const entries = Object.entries(graphs)
+  if (entries.length === 0) return []
+  return [
+    '',
+    '### Graph Results',
+    '',
+    ...entries.map(([name, graph]) => renderGraphSummary(name, graph)),
+  ]
+}
 
-  return lines.join('\n')
+function buildErrorSummaryLines(errors: string[]): string[] {
+  if (errors.length === 0) return []
+  return ['', '### Errors', '', ...errors.map((error) => `- ${error}`)]
+}
+
+function renderAgentSummary(name: string, agent: AgentState): string {
+  const duration = formatSummaryDuration(agent.startedAt, agent.completedAt)
+  const errorSuffix = agent.error === undefined ? '' : ` — ${agent.error}`
+  const attemptSuffix = formatSummaryAttempt(agent.attempt)
+  return `- **${name}**: ${agent.status}${attemptSuffix} (${duration})${errorSuffix}`
+}
+
+function renderBashSummary(name: string, bashNode: BashNodeState): string {
+  const duration = formatSummaryDuration(
+    bashNode.startedAt,
+    bashNode.completedAt,
+  )
+  const attemptSuffix = formatSummaryAttempt(bashNode.attempt)
+  const outputSuffix =
+    bashNode.outputPath === undefined ? '' : ` -> ${bashNode.outputPath}`
+  const exitSuffix =
+    bashNode.exitCode === undefined ? '' : ` exit ${bashNode.exitCode}`
+  const errorSuffix = bashNode.error === undefined ? '' : ` — ${bashNode.error}`
+  return `- **${name}**: ${bashNode.status}${attemptSuffix}${outputSuffix}${exitSuffix} (${duration})${errorSuffix}`
+}
+
+function renderGraphSummary(name: string, graph: GraphState): string {
+  const duration = formatSummaryDuration(graph.startedAt, graph.completedAt)
+  const roundSuffix = formatGraphRoundSuffix(graph)
+  const errorSuffix = graph.error === undefined ? '' : ` — ${graph.error}`
+  const attemptSuffix = formatSummaryAttempt(graph.attempt)
+  return `- **${name}**: ${graph.status}${attemptSuffix}${roundSuffix} (${duration})${errorSuffix}`
+}
+
+function formatSummaryAttempt(attempt: number): string {
+  return attempt > 1 ? ` attempt ${attempt}` : ''
+}
+
+function formatSummaryDuration(
+  startedAt: number | undefined,
+  completedAt: number | undefined,
+): string {
+  if (startedAt === undefined || completedAt === undefined) return 'n/a'
+  return formatDuration(completedAt - startedAt)
+}
+
+function formatGraphRoundSuffix(graph: GraphState): string {
+  if (graph.currentRound === undefined || graph.maxRounds === undefined)
+    return ''
+  return ` round ${graph.currentRound}/${graph.maxRounds}`
 }

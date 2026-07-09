@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=../dag.schema.json
+swarm:
+  name: sample-implementation-graph
+  workspace: ../../../.worktrees/swarm-implementation-standalone
+  mode: parallel
+  target_count: 1
+  model: pi/smol
+  concurrency: 2
+  nodes:
+    api_writer:
+      type: agent
+      role: implementer
+      task: |
+        Create implementation/reports if needed.
+        Write implementation/reports/api.md with exactly "api ok".
+        Write signals/api.txt with exactly "OK".
+      reports_to: [implementation_summary]
+    ui_writer:
+      type: agent
+      role: implementer
+      task: |
+        Create implementation/reports if needed.
+        Write implementation/reports/ui.md with exactly "ui ok".
+        Write signals/ui.txt with exactly "OK".
+      reports_to: [implementation_summary]
+    implementation_summary:
+      type: agent
+      role: integrator
+      task: |
+        Read implementation/reports/api.md and implementation/reports/ui.md.
+        Write implementation/reports/summary.md with exactly "implementation ok".
+        Write signals/implementation.txt with exactly "OK".
+      waits_for: [api_writer, ui_writer]
