@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../dag.schema.json
+swarm:
+  name: sample-inline-tools
+  workspace: ../../../.worktrees/swarm-inline-tools
+  mode: sequential
+  target_count: 1
+  concurrency: 1
+  nodes:
+    inline_work:
+      type: graph
+      swarm:
+        name: sample-inline-tools-child
+        workspace: ../../../.worktrees/swarm-inline-tools
+        mode: sequential
+        target_count: 1
+        concurrency: 1
+        nodes:
+          restricted_writer:
+            type: agent
+            role: restricted writer
+            model: pi/smol
+            tools: [write]
+            task: |
+              Use the write tool to create output/restricted.txt containing exactly restricted write ok.

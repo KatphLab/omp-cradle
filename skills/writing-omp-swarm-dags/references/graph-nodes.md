@@ -1,8 +1,10 @@
 # Graph Nodes
 
-Read this complete file when the new DAG imports another graph or uses fixed `repeat` rounds.
+Read this complete file when the new DAG uses file-backed or inline child graphs, or fixed `repeat` rounds.
 
 ## Graph Fields
+
+File-backed child:
 
 ```yaml
 review_round:
@@ -12,20 +14,38 @@ review_round:
   reports_to: [integrate]
 ```
 
-| Field        | Required | Contract                                                                                 |
-| ------------ | -------- | ---------------------------------------------------------------------------------------- |
-| `type`       | yes      | Exactly `graph`.                                                                         |
-| `path`       | yes      | Non-empty child YAML path; relative paths resolve from the YAML that declares the graph. |
-| `waits_for`  | no       | Local parent upstream IDs.                                                               |
-| `reports_to` | no       | Local parent downstream IDs.                                                             |
-| `repeat`     | no       | Fixed bounded child execution described below.                                           |
-| `control`    | no       | Dynamic decision object; read `control-and-recovery.md`.                                 |
+Inline child:
 
-Imports load recursively and import cycles fail validation. Parent dependencies address the graph node as a unit; they cannot name child node IDs.
+```yaml
+inline_review:
+  type: graph
+  swarm:
+    name: inline-review
+    workspace: .
+    mode: sequential
+    concurrency: 1
+    nodes:
+      review:
+        type: agent
+        role: reviewer
+        task: Review the current project.
+```
 
-An imported child's `workspace` and `concurrency` are used when that YAML runs alone. When imported, all child nodes use the parent run's resolved project workspace and child agents share the parent's concurrency limiter. Child source ownership must therefore be coordinated with every parent and sibling node that can run at the same time.
+| Field        | Required | Contract                                                                                              |
+| ------------ | -------- | ----------------------------------------------------------------------------------------------------- |
+| `type`       | yes      | Exactly `graph`.                                                                                      |
+| `path`       | one of   | Non-empty child YAML path; relative paths resolve from the YAML that declares the graph.              |
+| `swarm`      | one of   | Inline child swarm object with the same root fields and node contracts as a top-level `swarm` object. |
+| `waits_for`  | no       | Local parent upstream IDs.                                                                            |
+| `reports_to` | no       | Local parent downstream IDs.                                                                          |
+| `repeat`     | no       | Fixed bounded child execution described below.                                                        |
+| `control`    | no       | Dynamic decision object; read `control-and-recovery.md`.                                              |
 
-An imported child's agent-level model overrides its own `swarm.model`; parent model settings are not inherited into the child.
+Exactly one of `path` and `swarm` is required. They cannot appear together. File-backed children load recursively and import cycles fail validation; inline children may themselves contain either form.
+
+Parent dependencies address the graph node as a unit; they cannot name child node IDs. An inline child has the same shared root workspace and concurrency behavior as a file-backed child: when nested, all child nodes use the parent run's resolved project workspace and child agents share the parent's concurrency limiter.
+
+An imported or inline child's agent-level model overrides its own `swarm.model`; parent model settings are not inherited into the child.
 
 ## Fixed Graph Repeat
 
@@ -62,4 +82,4 @@ A child graph is a reusable orchestration boundary, not a filesystem sandbox. Gi
 - Child-specific DAG-owned reports/signals to prevent path collisions.
 - `target_count: 1` when the parent applies `repeat`.
 
-Validate the root YAML only after every child exists; validation recursively loads all imports and prints each graph's waves.
+Validate the root YAML only after every file-backed child exists; validation recursively hydrates file-backed and inline child graphs, rejects import cycles, and prints the root graph's waves.

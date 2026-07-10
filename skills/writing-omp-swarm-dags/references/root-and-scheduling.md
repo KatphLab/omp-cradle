@@ -70,7 +70,7 @@ After the YAML and every imported child exist, run:
 omp-swarm validate path/to/swarm.yaml
 ```
 
-Validation recursively loads imports, checks supported values and cross-field constraints, rejects dependency/import cycles and invalid control targets, and prints execution waves. It does not execute nodes, check project anchors, prove path ownership, or run project verification.
+Validation recursively hydrates file-backed and inline child graphs, checks supported values and cross-field constraints, rejects dependency/import cycles and invalid control targets, and prints execution waves. It does not execute nodes, check project anchors, prove path ownership, or run project verification.
 
 Delivery requires:
 

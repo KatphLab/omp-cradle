@@ -108,6 +108,7 @@ function buildAgentDefinition(agent: SwarmAgent): AgentDefinition {
     description: `Swarm agent: ${agent.role}`,
     systemPrompt: buildSystemPrompt(agent),
     source: 'project',
+    ...(agent.tools === undefined ? {} : { tools: agent.tools }),
   }
 }
 

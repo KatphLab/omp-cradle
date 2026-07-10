@@ -17,6 +17,7 @@ interface RawSwarmAgentConfig {
   reports_to?: unknown
   waits_for?: unknown
   model?: unknown
+  tools?: unknown
   control?: unknown
   [key: string]: unknown
 }
@@ -41,6 +42,7 @@ interface RawSwarmGraphRepeatConfig {
 interface RawSwarmGraphConfig {
   type?: unknown
   path?: unknown
+  swarm?: unknown
   waits_for?: unknown
   reports_to?: unknown
   repeat?: unknown
@@ -91,6 +93,7 @@ export interface SwarmAgent extends SwarmNodeBase {
   extraContext?: string
   model?: string
   control?: SwarmNodeControl
+  tools?: string[]
 }
 
 export interface SwarmBashNode extends SwarmNodeBase {
@@ -107,16 +110,16 @@ export interface SwarmGraphRepeat {
   continueValue: string
 }
 
-export interface SwarmGraphReference extends SwarmNodeBase {
+export interface SwarmGraphNode extends SwarmNodeBase {
   type: 'graph'
-  path: string
+  path?: string
   repeat?: SwarmGraphRepeat
   control?: SwarmNodeControl
   resolvedPath?: string
   definition?: SwarmDefinition
 }
 
-export type SwarmNode = SwarmAgent | SwarmBashNode | SwarmGraphReference
+export type SwarmNode = SwarmAgent | SwarmBashNode | SwarmGraphNode
 
 export interface SwarmDefinition {
   name: string
@@ -130,7 +133,7 @@ export interface SwarmDefinition {
   nodeOrder: string[]
   agents: Map<string, SwarmAgent>
   bashNodes: Map<string, SwarmBashNode>
-  graphs: Map<string, SwarmGraphReference>
+  graphs: Map<string, SwarmGraphNode>
   sourcePath?: string
   sourceDir?: string
 }
@@ -139,7 +142,10 @@ const VALID_MODES: readonly SwarmMode[] = ['pipeline', 'parallel', 'sequential']
 const VALID_SWARM_NAME = /^[\w.-]+$/
 
 export function parseSwarmYaml(content: string): SwarmDefinition {
-  const swarm = extractRawSwarm(Bun.YAML.parse(content))
+  return parseSwarmConfig(extractRawSwarm(Bun.YAML.parse(content)))
+}
+
+function parseSwarmConfig(swarm: RawSwarmConfig): SwarmDefinition {
   const name = requireString(
     swarm.name,
     'swarm.name is required and must be a string',
@@ -236,13 +242,13 @@ function parseNodes(entries: [string, RawSwarmNodeConfig][]): {
   nodeOrder: string[]
   agents: Map<string, SwarmAgent>
   bashNodes: Map<string, SwarmBashNode>
-  graphs: Map<string, SwarmGraphReference>
+  graphs: Map<string, SwarmGraphNode>
 } {
   const nodes = new Map<string, SwarmNode>()
   const nodeOrder: string[] = []
   const agents = new Map<string, SwarmAgent>()
   const bashNodes = new Map<string, SwarmBashNode>()
-  const graphs = new Map<string, SwarmGraphReference>()
+  const graphs = new Map<string, SwarmGraphNode>()
 
   for (const [name, config] of entries) {
     const type = parseNodeType(name, config.type)
@@ -296,6 +302,8 @@ function parseAgentNode(name: string, config: RawSwarmAgentConfig): SwarmAgent {
     reportsTo: stringArray(config.reports_to),
     waitsFor: stringArray(config.waits_for),
   }
+  const tools = parseAgentTools(name, config.tools)
+  if (tools !== undefined) agent.tools = tools
   if (typeof config.extra_context === 'string') {
     agent.extraContext = config.extra_context.trim()
   }
@@ -306,6 +314,24 @@ function parseAgentNode(name: string, config: RawSwarmAgentConfig): SwarmAgent {
     agent.control = parseNodeControl('Agent', name, config.control)
   }
   return agent
+}
+
+function parseAgentTools(name: string, value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+
+  const error = `Agent '${name}': 'tools' must be a non-empty array of unique, non-empty strings`
+  if (!Array.isArray(value) || value.length === 0) throw new Error(error)
+
+  const tools: string[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (typeof item !== 'string') throw new Error(error)
+    const tool = item.trim()
+    if (tool.length === 0 || seen.has(tool)) throw new Error(error)
+    seen.add(tool)
+    tools.push(tool)
+  }
+  return tools
 }
 
 function parseBashNode(
@@ -348,19 +374,65 @@ function parseBashNode(
 function parseGraphNode(
   name: string,
   config: RawSwarmGraphConfig,
-): SwarmGraphReference {
-  const graph: SwarmGraphReference = {
+): SwarmGraphNode {
+  const graph: SwarmGraphNode = {
     name,
     type: 'graph',
-    path: requireString(config.path, `Graph '${name}': 'path' is required`),
     reportsTo: stringArray(config.reports_to),
     waitsFor: stringArray(config.waits_for),
+    ...parseGraphSource(name, config),
   }
+  applyGraphOptions(name, config, graph)
+  return graph
+}
+
+function parseGraphSource(
+  name: string,
+  config: RawSwarmGraphConfig,
+): Pick<SwarmGraphNode, 'path' | 'definition'> {
+  const hasPath = config.path !== undefined
+  const hasSwarm = config.swarm !== undefined
+  if (hasPath === hasSwarm) {
+    throw new Error(
+      `Graph '${name}' must define exactly one of 'path' or 'swarm'`,
+    )
+  }
+  if (hasPath) return { path: parseGraphPath(name, config.path) }
+  return { definition: parseInlineGraphDefinition(name, config.swarm) }
+}
+
+function parseGraphPath(name: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(
+      `Graph '${name}' must define exactly one of 'path' or 'swarm'`,
+    )
+  }
+  return value.trim()
+}
+
+function parseInlineGraphDefinition(
+  name: string,
+  value: unknown,
+): SwarmDefinition {
+  try {
+    if (!isRecord(value)) throw new Error("'swarm' must be an object")
+    return parseSwarmConfig(value)
+  } catch (error) {
+    const normalizedError =
+      error instanceof Error ? error : new Error(String(error))
+    throw new Error(`Graph '${name}' inline swarm: ${normalizedError.message}`)
+  }
+}
+
+function applyGraphOptions(
+  name: string,
+  config: RawSwarmGraphConfig,
+  graph: SwarmGraphNode,
+): void {
   if (config.repeat !== undefined)
     graph.repeat = parseGraphRepeat(name, config.repeat)
   if (config.control !== undefined)
     graph.control = parseNodeControl('Graph', name, config.control)
-  return graph
 }
 
 function parseRestartPolicy(value: unknown): SwarmRestartPolicy {
@@ -565,7 +637,7 @@ function validateNamedReferences(
 
 function validateRepeat(
   name: string,
-  graph: SwarmGraphReference,
+  graph: SwarmGraphNode,
   errors: string[],
 ): void {
   if (graph.repeat === undefined) return
@@ -629,6 +701,9 @@ function validateTargetCount(
   swarmDefinition: SwarmDefinition,
   errors: string[],
 ): void {
+  if (!Number.isInteger(swarmDefinition.targetCount)) {
+    errors.push('target_count must be an integer')
+  }
   if (swarmDefinition.targetCount < 1) {
     errors.push('target_count must be at least 1')
   }

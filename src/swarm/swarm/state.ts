@@ -6,7 +6,7 @@ import type {
   SwarmAgent,
   SwarmBashNode,
   SwarmDefinition,
-  SwarmGraphReference,
+  SwarmGraphNode,
   SwarmNodeControl,
 } from './schema'
 
@@ -113,6 +113,7 @@ interface SwarmDefinitionAgentNodeSummary extends SwarmDefinitionNodeSummaryBase
   role: string
   task: string
   model?: string
+  tools?: string[]
 }
 
 interface SwarmDefinitionBashNodeSummary extends SwarmDefinitionNodeSummaryBase {
@@ -124,8 +125,8 @@ interface SwarmDefinitionBashNodeSummary extends SwarmDefinitionNodeSummaryBase 
 
 interface SwarmDefinitionGraphNodeSummary extends SwarmDefinitionNodeSummaryBase {
   type: 'graph'
-  path: string
-  repeat?: SwarmGraphReference['repeat']
+  path?: string
+  repeat?: SwarmGraphNode['repeat']
   definition?: SwarmDefinitionStateSummary
 }
 
@@ -841,46 +842,78 @@ function buildDefinitionFingerprint(
 }
 
 function buildNodeSummary(
-  node: SwarmAgent | SwarmBashNode | SwarmGraphReference,
+  node: SwarmAgent | SwarmBashNode | SwarmGraphNode,
 ): SwarmDefinitionNodeSummary {
-  const base = {
+  switch (node.type) {
+    case 'agent': {
+      return buildAgentNodeSummary(node)
+    }
+    case 'bash': {
+      return buildBashNodeSummary(node)
+    }
+    case 'graph': {
+      return buildGraphNodeSummary(node)
+    }
+  }
+}
+
+function buildNodeSummaryBase(
+  node: SwarmAgent | SwarmBashNode | SwarmGraphNode,
+): Omit<SwarmDefinitionNodeSummaryBase, 'type'> {
+  return {
     name: node.name,
     waitsFor: [...node.waitsFor].toSorted(compareStrings),
     reportsTo: [...node.reportsTo].toSorted(compareStrings),
-    ...(node.type === 'agent' || node.type === 'graph'
-      ? buildControlSummary(node.control)
-      : {}),
   }
-  switch (node.type) {
-    case 'agent': {
-      return {
-        ...base,
-        type: 'agent',
-        role: node.role,
-        task: node.task,
-        ...(node.model === undefined ? {} : { model: node.model }),
-      }
-    }
-    case 'bash': {
-      return {
-        ...base,
-        type: 'bash',
-        command: node.command,
-        outputPath: node.outputPath,
-        ...(node.cwd === undefined ? {} : { cwd: node.cwd }),
-      }
-    }
-    case 'graph': {
-      return {
-        ...base,
-        type: 'graph',
-        path: node.path,
-        ...(node.repeat === undefined ? {} : { repeat: node.repeat }),
-        ...(node.definition === undefined
-          ? {}
-          : { definition: buildDefinitionStateSummary(node.definition) }),
-      }
-    }
+}
+
+function buildControlledNodeSummaryBase(
+  node: SwarmAgent | SwarmGraphNode,
+): Omit<SwarmDefinitionNodeSummaryBase, 'type'> {
+  return {
+    ...buildNodeSummaryBase(node),
+    ...buildControlSummary(node.control),
+  }
+}
+
+function buildAgentNodeSummary(
+  node: SwarmAgent,
+): SwarmDefinitionAgentNodeSummary {
+  return {
+    ...buildControlledNodeSummaryBase(node),
+    type: 'agent',
+    role: node.role,
+    task: node.task,
+    ...(node.model === undefined ? {} : { model: node.model }),
+    ...(node.tools === undefined
+      ? {}
+      : { tools: [...node.tools].toSorted(compareStrings) }),
+  }
+}
+
+function buildBashNodeSummary(
+  node: SwarmBashNode,
+): SwarmDefinitionBashNodeSummary {
+  return {
+    ...buildNodeSummaryBase(node),
+    type: 'bash',
+    command: node.command,
+    outputPath: node.outputPath,
+    ...(node.cwd === undefined ? {} : { cwd: node.cwd }),
+  }
+}
+
+function buildGraphNodeSummary(
+  node: SwarmGraphNode,
+): SwarmDefinitionGraphNodeSummary {
+  return {
+    ...buildControlledNodeSummaryBase(node),
+    type: 'graph',
+    ...(node.path === undefined ? {} : { path: node.path }),
+    ...(node.repeat === undefined ? {} : { repeat: node.repeat }),
+    ...(node.definition === undefined
+      ? {}
+      : { definition: buildDefinitionStateSummary(node.definition) }),
   }
 }
 
@@ -1033,6 +1066,7 @@ function appendAgentNodeDiff(
   appendScalarDiffs(lines, `node '${nodePath}'`, prior, current, [
     'role',
     'model',
+    'tools',
   ])
   if (prior.task !== current.task) lines.push(`node '${nodePath}' task changed`)
 }
@@ -1062,6 +1096,23 @@ function appendGraphNodeDiff(
     'path',
     'repeat',
   ])
+  if (prior.definition !== undefined && current.definition !== undefined) {
+    appendScalarDiffs(
+      lines,
+      `node '${nodePath}' child definition`,
+      prior.definition,
+      current.definition,
+      [
+        'name',
+        'workspace',
+        'mode',
+        'targetCount',
+        'concurrency',
+        'model',
+        'restartPolicy',
+      ],
+    )
+  }
   appendNodeDiffs(
     lines,
     `${nodePath}.`,

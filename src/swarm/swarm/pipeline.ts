@@ -15,7 +15,7 @@ import { executeSwarmAgent, type SwarmExecutorOptions } from './executor'
 import type {
   SwarmBashNode,
   SwarmDefinition,
-  SwarmGraphReference,
+  SwarmGraphNode,
   SwarmGraphRepeat,
   SwarmNodeControl,
 } from './schema'
@@ -60,7 +60,7 @@ export interface GraphResult {
   index: number
   id: string
   graph: string
-  path: string
+  path?: string
   status: PipelineStatus
   rounds: number
   errors: string[]
@@ -101,7 +101,7 @@ interface ControlNodeDecision {
 }
 
 type FinishGraphArguments = [
-  graph: SwarmGraphReference,
+  graph: SwarmGraphNode,
   currentIndex: number,
   attempt: number,
   startedAt: number,
@@ -800,7 +800,7 @@ export class PipelineController {
   }
 
   async #runGraph(
-    graph: SwarmGraphReference,
+    graph: SwarmGraphNode,
     currentIndex: number,
     iteration: number,
     waveIndex: number,
@@ -811,7 +811,7 @@ export class PipelineController {
     const stateDirectories: string[] = []
     await this.#markGraphRunning(graph, startedAt, iteration, waveIndex)
 
-    if (graph.definition === undefined || graph.resolvedPath === undefined) {
+    if (graph.definition === undefined) {
       return await this.#finishGraph(
         graph,
         currentIndex,
@@ -848,7 +848,7 @@ export class PipelineController {
   }
 
   async #markGraphRunning(
-    graph: SwarmGraphReference,
+    graph: SwarmGraphNode,
     startedAt: number,
     iteration: number,
     waveIndex: number,
@@ -869,7 +869,7 @@ export class PipelineController {
   }
 
   async #runSingleGraph(
-    graph: SwarmGraphReference,
+    graph: SwarmGraphNode,
     currentIndex: number,
     attempt: number,
     startedAt: number,
@@ -911,7 +911,7 @@ export class PipelineController {
   }
 
   async #runRepeatedGraph(
-    graph: SwarmGraphReference,
+    graph: SwarmGraphNode,
     currentIndex: number,
     attempt: number,
     startedAt: number,
@@ -994,7 +994,7 @@ export class PipelineController {
   }
 
   async #finishGraphNotLoaded(
-    graph: SwarmGraphReference,
+    graph: SwarmGraphNode,
     currentIndex: number,
     attempt: number,
     startedAt: number,
@@ -1013,7 +1013,7 @@ export class PipelineController {
   }
 
   async #finishRepeatLimitExceeded(
-    graph: SwarmGraphReference,
+    graph: SwarmGraphNode,
     currentIndex: number,
     attempt: number,
     startedAt: number,
@@ -1036,7 +1036,7 @@ export class PipelineController {
   }
 
   async #runRepeatRound(
-    graph: SwarmGraphReference,
+    graph: SwarmGraphNode,
     definition: SwarmDefinition,
     attempt: number,
     round: number,
@@ -1063,7 +1063,7 @@ export class PipelineController {
   }
 
   async #readStopSignalResult(
-    graph: SwarmGraphReference,
+    graph: SwarmGraphNode,
     workspace: string,
   ): Promise<RepeatStopSignalResult> {
     const repeat = graph.repeat
@@ -1325,11 +1325,12 @@ export class PipelineController {
       graph.name,
       `Graph '${graph.name}' ${status} (${errors.length} errors)`,
     )
+    const graphPath = graph.resolvedPath ?? graph.path
     return {
       index: currentIndex,
       id: `swarm-${this.#swarmDefinition.name}-${graph.name}-attempt${attempt}`,
       graph: graph.name,
-      path: graph.resolvedPath ?? graph.path,
+      ...(graphPath === undefined ? {} : { path: graphPath }),
       status,
       rounds,
       errors,
@@ -1521,7 +1522,7 @@ function cloneSwarmDefinition(
 
 async function readRepeatStopSignal(
   workspace: string,
-  graph: SwarmGraphReference,
+  graph: SwarmGraphNode,
 ): Promise<string> {
   const repeat = graph.repeat
   if (repeat === undefined)

@@ -12,20 +12,24 @@ implement:
     Inspect the bounded project scope and edit the assigned source paths.
   extra_context: Preserve existing project conventions.
   model: pi/slow
+  tools: [read, write]
   waits_for: [investigate]
   reports_to: [check]
 ```
 
-| Field           | Required | Contract                                                                                     |
-| --------------- | -------- | -------------------------------------------------------------------------------------------- |
-| `type`          | yes      | Exactly `agent`.                                                                             |
-| `role`          | yes      | Non-empty role used in the system prompt.                                                    |
-| `task`          | yes      | Non-empty objective and project-state contract.                                              |
-| `extra_context` | no       | Additional system-prompt context; do not hide required task inputs or outputs here.          |
-| `model`         | no       | Non-empty node override; otherwise this graph's `swarm.model` or configured default applies. |
-| `waits_for`     | no       | Local upstream IDs; semantics live in `root-and-scheduling.md`.                              |
-| `reports_to`    | no       | Local downstream IDs; semantics live in `root-and-scheduling.md`.                            |
-| `control`       | no       | Agent/graph-only control object; read `control-and-recovery.md`.                             |
+| Field           | Required | Contract                                                                                            |
+| --------------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `type`          | yes      | Exactly `agent`.                                                                                    |
+| `role`          | yes      | Non-empty role used in the system prompt.                                                           |
+| `task`          | yes      | Non-empty objective and project-state contract.                                                     |
+| `extra_context` | no       | Additional system-prompt context; do not hide required task inputs or outputs here.                 |
+| `model`         | no       | Non-empty node override; otherwise this graph's `swarm.model` or configured default applies.        |
+| `tools`         | no       | Non-empty unique string list selecting native built-in tools; omitted means unrestricted built-ins. |
+| `waits_for`     | no       | Local upstream IDs; semantics live in `root-and-scheduling.md`.                                     |
+| `reports_to`    | no       | Local downstream IDs; semantics live in `root-and-scheduling.md`.                                   |
+| `control`       | no       | Agent/graph-only control object; read `control-and-recovery.md`.                                    |
+
+`tools` is an initial native built-in allowlist, not a non-escalatable security boundary. Names are trimmed and must be unique; unknown or unavailable names are omitted by the native registry. Subprocess agents additionally receive the mandatory `irc` and hidden `yield` tools when runtime gates permit them. Discovered extension/custom tools remain active, and a selected discovery or extension tool may activate more tools later. Do not use this field to claim a strict all-registry sandbox.
 
 Every agent runs with the resolved swarm workspace as its working directory. Agent nodes have no separate `cwd` field and no per-node worktree. Imported child agents also use the root run's workspace.
 

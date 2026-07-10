@@ -29,17 +29,35 @@ async function loadSwarmDefinitionFileInternal(
   definition.sourcePath = absolutePath
   definition.sourceDir = path.dirname(absolutePath)
 
-  const childStack = [...stack, absolutePath]
-  for (const graph of definition.graphs.values()) {
-    const childPath = path.resolve(definition.sourceDir, graph.path)
-    graph.resolvedPath = childPath
-    graph.definition = await loadSwarmDefinitionFileInternal(
-      childPath,
-      childStack,
-    )
+  await hydrateGraphDefinitions(definition, [...stack, absolutePath])
+  return definition
+}
+
+async function hydrateGraphDefinitions(
+  definition: SwarmDefinition,
+  stack: string[],
+): Promise<void> {
+  if (
+    definition.sourcePath === undefined ||
+    definition.sourceDir === undefined
+  ) {
+    throw new Error(`Swarm '${definition.name}' has no source location`)
   }
 
-  return definition
+  for (const graph of definition.graphs.values()) {
+    if (graph.path !== undefined) {
+      const childPath = path.resolve(definition.sourceDir, graph.path)
+      graph.resolvedPath = childPath
+      graph.definition = await loadSwarmDefinitionFileInternal(childPath, stack)
+      continue
+    }
+
+    if (graph.definition !== undefined) {
+      graph.definition.sourcePath = definition.sourcePath
+      graph.definition.sourceDir = definition.sourceDir
+      await hydrateGraphDefinitions(graph.definition, stack)
+    }
+  }
 }
 
 function normalizeError(error: unknown): Error {

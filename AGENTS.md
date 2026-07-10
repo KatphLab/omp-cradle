@@ -42,6 +42,10 @@
 - Do not introduce `eval`, the `Function` constructor, unsafe shell execution, or hardcoded secrets.
 - Treat security findings as defects; fix the root cause.
 
+## Testing
+
+- Do not write unit tests, instead test actualy behavior. Generate your testing plan and get it approved before starting the test.
+
 ## oh-my-pi documentation
 
 - /home/lalit/github/oh-my-pi/docs/extensions.md
