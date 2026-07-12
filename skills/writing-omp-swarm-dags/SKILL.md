@@ -13,15 +13,16 @@ The existing project is the work surface and the deliverable. Point `swarm.works
 
 A route selects whole files only. Read each selected file from beginning to end.
 
-| Condition                                                          | Read                                                                                                              |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| Every new DAG                                                      | [Project Workflows](references/project-workflows.md) and [Root and Scheduling](references/root-and-scheduling.md) |
-| DAG contains an `agent` node                                       | [Agent Nodes](references/agent-nodes.md)                                                                          |
-| DAG contains a `bash` node                                         | [Bash Nodes](references/bash-nodes.md)                                                                            |
-| DAG contains an imported or repeated `graph` node                  | [Graph Nodes](references/graph-nodes.md)                                                                          |
-| DAG uses `control`, `restart_policy`, rewind, restart, or resume   | [Control and Recovery](references/control-and-recovery.md)                                                        |
-| DAG creates handoffs, reports, signals, cleanup, cache, or history | [Artifact Lifecycle](references/artifact-lifecycle.md)                                                            |
-| A complete source-change composition would help                    | [DAG Template](references/dag-template.md)                                                                        |
+| Condition                                                            | Read                                                                                                              |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Every new DAG                                                        | [Project Workflows](references/project-workflows.md) and [Root and Scheduling](references/root-and-scheduling.md) |
+| DAG contains an `agent` node                                         | [Agent Nodes](references/agent-nodes.md)                                                                          |
+| DAG contains a `bash` node                                           | [Bash Nodes](references/bash-nodes.md)                                                                            |
+| DAG contains an imported or repeated `graph` node                    | [Graph Nodes](references/graph-nodes.md)                                                                          |
+| DAG uses `control`, `restart_policy`, rewind, restart, or resume     | [Control and Recovery](references/control-and-recovery.md)                                                        |
+| DAG creates handoffs, reports, signals, cleanup, cache, or history   | [Artifact Lifecycle](references/artifact-lifecycle.md)                                                            |
+| A complete source-change composition would help                      | [DAG Template](references/dag-template.md)                                                                        |
+| A specification-driven review and remediation composition would help | [Specification Review and Remediation Template](references/spec-review-remediation-template.md)                   |
 
 Do not read a node-type or optional-feature file unless the new DAG uses that feature.
 
