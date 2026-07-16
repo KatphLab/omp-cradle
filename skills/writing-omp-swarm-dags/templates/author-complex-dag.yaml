@@ -1,0 +1,491 @@
+swarm:
+  name: author-complex-dag
+  workspace: ..
+  mode: parallel
+  target_count: 1
+  concurrency: 4
+  restart_policy:
+    max_restarts: 2
+    max_restarts_per_target: 2
+    max_node_attempts: 3
+  nodes:
+    prepare:
+      type: agent
+      role: Portable DAG authoring workspace guard
+      task: |
+        This template must be copied to <project>/.omp/author-complex-dag.yaml
+        before execution, so workspace: .. resolves to the existing project.
+        Verify that .omp/author-complex-dag.yaml and
+        .omp-swarm/author-complex-dag/input/request.yaml exist and that every
+        project anchor declared by the request matches an existing path beneath
+        the canonical workspace. Because the YAML already resides under the
+        project, reject any resolved workspace other than its existing parent.
+
+        The request must contain: goal and observable completion criteria; a
+        non-empty sources list whose records each have a unique id,
+        workspace-relative path, semantic domain, authority, normative or
+        evidentiary status, and conservative estimated_tokens; source_reading
+        with shard_count: 8 and a positive max_estimated_tokens_per_shard; an
+        explicit conflict-precedence rule; bounded project inspection paths;
+        mutable and forbidden project paths; ownership.clusters with stable IDs,
+        exact paths, dependencies, and focused check IDs; ownership.convergence
+        with exact shared paths, sole owners, and predecessor clusters; exact
+        deterministic acceptance commands with ids, cwd values, and mutable
+        outputs; project anchors; operational constraints; and generated_dag with
+        path: .omp/generated-complex-task.yaml plus overwrite: fail-if-exists or
+        replace-matching-sha256. The replacement form requires the current file's
+        expected_sha256. Reject any other generated path, absolute path, path or
+        symlink escape, missing source, duplicate ID, vague command such as
+        "usual checks", ownership outside mutable_paths, same-wave overlap,
+        convergence without one serialized owner, missing precedence, or source
+        workload that cannot fit the declared reader budget. Infer nothing.
+
+        Never edit or delete project source, persistent input/, .git, or any
+        runtime-owned .swarm_* directory. Before cleanup, enforce generated_dag:
+        fail when its fixed output exists under fail-if-exists; under
+        replace-matching-sha256, fail unless its current digest exactly matches
+        expected_sha256. After all validation succeeds, remove only the literal
+        .omp-swarm/author-complex-dag/run/ subtree, recreate its meta/, handoffs/,
+        reports/, and signals/ directories, and atomically write a canonical
+        request with source, anchor, and accepted prior-output digests to
+        .omp-swarm/author-complex-dag/run/meta/request.yaml. Then atomically write
+        .omp-swarm/author-complex-dag/run/signals/prepare.control.yaml with:
+        action: continue
+        reason: authoring request and existing workspace verified
+
+        On invalid input, preserve existing project and input files, create only
+        run/signals/ if needed, and atomically write the same control file with
+        action: fail and a concrete safe reason. Never emit a second decision.
+      control:
+        signal: .omp-swarm/author-complex-dag/run/signals/prepare.control.yaml
+        allowed_restart_targets: [prepare]
+
+    partition_sources:
+      type: agent
+      role: Complete-source assignment planner
+      task: |
+        Read the canonical request. Do not edit project files. Confirm
+        source_reading declares exactly eight shards and a positive per-shard
+        estimated-token limit. Partition every source ID exactly once among the
+        eight fixed reader shards by complete semantic domain and conservative
+        estimated context size. Keep one document wholly assigned to one reader;
+        a reader may consume it in contiguous chunks but no document may cross
+        readers. No shard may exceed max_estimated_tokens_per_shard. If any
+        source or the total corpus cannot fit, write a BLOCKED assignment report
+        with the exact overload and require a deliberately widened copy of this
+        template; never omit, truncate, or silently rebalance beyond the limit.
+        Keep conflicting documents in separate packets. Empty shards are valid.
+        Atomically write eight manifests to
+        .omp-swarm/author-complex-dag/run/handoffs/source-shard-1.yaml through
+        source-shard-8.yaml and a total assignment ledger to
+        .omp-swarm/author-complex-dag/run/handoffs/source-assignments.yaml. Prove
+        source-list set equality, unique assignment, expected digests, domains,
+        authority, per-source estimates, and per-shard budget totals.
+      waits_for: [prepare]
+
+    analyze_project:
+      type: agent
+      role: Project architecture and ownership analyst
+      task: |
+        Read the canonical request. Inspect only its bounded project scope and
+        directly applicable project guidance. Do not edit project files or the
+        generated DAG. Locate existing conventions, dependency boundaries,
+        public symbols and bounded callers, shared convergence files, generated
+        files, applicable project commands, and command-generated outputs.
+        Verify the declared ownership clusters against actual dependencies and
+        references. Keep cluster paths inside mutable_paths, keep same-wave
+        clusters disjoint, place declared dependencies first, and assign every
+        shared export, registry, manifest, lockfile, index, or generated
+        convergence path to its one declared later owner. A mismatch is BLOCKED,
+        not permission to invent a cluster or expand the envelope. Do not invent
+        checks. Atomically write READY or BLOCKED plus the confirmed ownership,
+        dependency order, convergence owners, and focused verification to
+        .omp-swarm/author-complex-dag/run/handoffs/project-analysis.md.
+      waits_for: [prepare]
+
+    analyze_runtime:
+      type: agent
+      role: OMP swarm runtime contract analyst
+      task: |
+        Load the installed writing-omp-swarm-dags skill. Read its Project
+        Workflows and Root and Scheduling references, plus every node-type or
+        optional-feature reference needed by the requested workflow. Inspect the
+        available omp-swarm help and schema when accessible. Do not edit files.
+        Derive only supported fields and actual semantics for workspace
+        resolution, explicit dependencies and waves, agent concurrency, Bash
+        settlement, output paths, imports, control ancestry, bounded restart,
+        rewind persistence, resume, and validation. Record that non-zero Bash
+        completion does not gate dependents and that scheduler rewind does not
+        restore project files. Atomically write a runtime contract, required
+        validation command, and anti-pattern list to
+        .omp-swarm/author-complex-dag/run/handoffs/runtime-contract.md.
+      waits_for: [prepare]
+
+    read_source_shard_1:
+      type: agent
+      role: Complete source reader one
+      task: |
+        Read source-shard-1.yaml and every assigned source completely from start
+        through end, using contiguous chunks when needed. Do not edit project
+        files. For each source, record expected and observed digest, complete
+        range ledger, purpose, authority, terminology, normative statements,
+        boundary and invalid cases, dependencies, conflicts, supersession claims,
+        observable acceptance, exact citations, and consumed estimated-token
+        budget. Do not resolve conflicts by preference or promote examples to
+        requirements. Atomically write the assigned packets to
+        .omp-swarm/author-complex-dag/run/handoffs/sources/reader-1.md, or EMPTY
+        when unassigned. Mark changed, unreadable, or over-budget sources BLOCKED.
+      waits_for: [partition_sources]
+
+    read_source_shard_2:
+      type: agent
+      role: Complete source reader two
+      task: |
+        Read source-shard-2.yaml and every assigned source completely from start
+        through end, using contiguous chunks when needed. Do not edit project
+        files. For each source, record expected and observed digest, complete
+        range ledger, purpose, authority, terminology, normative statements,
+        boundary and invalid cases, dependencies, conflicts, supersession claims,
+        observable acceptance, exact citations, and consumed estimated-token
+        budget. Do not resolve conflicts by preference or promote examples to
+        requirements. Atomically write the assigned packets to
+        .omp-swarm/author-complex-dag/run/handoffs/sources/reader-2.md, or EMPTY
+        when unassigned. Mark changed, unreadable, or over-budget sources BLOCKED.
+      waits_for: [partition_sources]
+
+    read_source_shard_3:
+      type: agent
+      role: Complete source reader three
+      task: |
+        Read source-shard-3.yaml and every assigned source completely from start
+        through end, using contiguous chunks when needed. Do not edit project
+        files. For each source, record expected and observed digest, complete
+        range ledger, purpose, authority, terminology, normative statements,
+        boundary and invalid cases, dependencies, conflicts, supersession claims,
+        observable acceptance, exact citations, and consumed estimated-token
+        budget. Do not resolve conflicts by preference or promote examples to
+        requirements. Atomically write the assigned packets to
+        .omp-swarm/author-complex-dag/run/handoffs/sources/reader-3.md, or EMPTY
+        when unassigned. Mark changed, unreadable, or over-budget sources BLOCKED.
+      waits_for: [partition_sources]
+
+    read_source_shard_4:
+      type: agent
+      role: Complete source reader four
+      task: |
+        Read source-shard-4.yaml and every assigned source completely from start
+        through end, using contiguous chunks when needed. Do not edit project
+        files. For each source, record expected and observed digest, complete
+        range ledger, purpose, authority, terminology, normative statements,
+        boundary and invalid cases, dependencies, conflicts, supersession claims,
+        observable acceptance, exact citations, and consumed estimated-token
+        budget. Do not resolve conflicts by preference or promote examples to
+        requirements. Atomically write the assigned packets to
+        .omp-swarm/author-complex-dag/run/handoffs/sources/reader-4.md, or EMPTY
+        when unassigned. Mark changed, unreadable, or over-budget sources BLOCKED.
+      waits_for: [partition_sources]
+
+    read_source_shard_5:
+      type: agent
+      role: Complete source reader five
+      task: |
+        Read source-shard-5.yaml and every assigned source completely from start
+        through end, using contiguous chunks when needed. Do not edit project
+        files. For each source, record expected and observed digest, complete
+        range ledger, purpose, authority, terminology, normative statements,
+        boundary and invalid cases, dependencies, conflicts, supersession claims,
+        observable acceptance, exact citations, and consumed estimated-token
+        budget. Do not resolve conflicts by preference or promote examples to
+        requirements. Atomically write the assigned packets to
+        .omp-swarm/author-complex-dag/run/handoffs/sources/reader-5.md, or EMPTY
+        when unassigned. Mark changed, unreadable, or over-budget sources BLOCKED.
+      waits_for: [partition_sources]
+
+    read_source_shard_6:
+      type: agent
+      role: Complete source reader six
+      task: |
+        Read source-shard-6.yaml and every assigned source completely from start
+        through end, using contiguous chunks when needed. Do not edit project
+        files. For each source, record expected and observed digest, complete
+        range ledger, purpose, authority, terminology, normative statements,
+        boundary and invalid cases, dependencies, conflicts, supersession claims,
+        observable acceptance, exact citations, and consumed estimated-token
+        budget. Do not resolve conflicts by preference or promote examples to
+        requirements. Atomically write the assigned packets to
+        .omp-swarm/author-complex-dag/run/handoffs/sources/reader-6.md, or EMPTY
+        when unassigned. Mark changed, unreadable, or over-budget sources BLOCKED.
+      waits_for: [partition_sources]
+
+    read_source_shard_7:
+      type: agent
+      role: Complete source reader seven
+      task: |
+        Read source-shard-7.yaml and every assigned source completely from start
+        through end, using contiguous chunks when needed. Do not edit project
+        files. For each source, record expected and observed digest, complete
+        range ledger, purpose, authority, terminology, normative statements,
+        boundary and invalid cases, dependencies, conflicts, supersession claims,
+        observable acceptance, exact citations, and consumed estimated-token
+        budget. Do not resolve conflicts by preference or promote examples to
+        requirements. Atomically write the assigned packets to
+        .omp-swarm/author-complex-dag/run/handoffs/sources/reader-7.md, or EMPTY
+        when unassigned. Mark changed, unreadable, or over-budget sources BLOCKED.
+      waits_for: [partition_sources]
+
+    read_source_shard_8:
+      type: agent
+      role: Complete source reader eight
+      task: |
+        Read source-shard-8.yaml and every assigned source completely from start
+        through end, using contiguous chunks when needed. Do not edit project
+        files. For each source, record expected and observed digest, complete
+        range ledger, purpose, authority, terminology, normative statements,
+        boundary and invalid cases, dependencies, conflicts, supersession claims,
+        observable acceptance, exact citations, and consumed estimated-token
+        budget. Do not resolve conflicts by preference or promote examples to
+        requirements. Atomically write the assigned packets to
+        .omp-swarm/author-complex-dag/run/handoffs/sources/reader-8.md, or EMPTY
+        when unassigned. Mark changed, unreadable, or over-budget sources BLOCKED.
+      waits_for: [partition_sources]
+
+    verify_source_coverage:
+      type: agent
+      role: Source coverage gate
+      task: |
+        Read the canonical request, assignment ledger, all eight shard manifests,
+        and all eight reader packets. Do not edit project files. Prove set
+        equality among requested, assigned, and completed source IDs; exactly one
+        reader per source; matching digests; contiguous start-to-end coverage;
+        complete citations; no duplicate or extra source; and every reader within
+        the declared estimated-token budget. Atomically write totals, missing and
+        duplicate sets, digest mismatches, per-domain and per-shard coverage, and
+        COVERAGE_PASS or BLOCKED to
+        .omp-swarm/author-complex-dag/run/reports/source-coverage.md. Atomically
+        write .omp-swarm/author-complex-dag/run/signals/coverage.control.yaml with
+        action: continue only for COVERAGE_PASS. Otherwise write action: fail and
+        a concrete reason; incomplete or overloaded source evidence is not
+        correctable by guessing or by later authoring nodes.
+      waits_for:
+        [
+          read_source_shard_1,
+          read_source_shard_2,
+          read_source_shard_3,
+          read_source_shard_4,
+          read_source_shard_5,
+          read_source_shard_6,
+          read_source_shard_7,
+          read_source_shard_8,
+        ]
+      control:
+        signal: .omp-swarm/author-complex-dag/run/signals/coverage.control.yaml
+        allowed_restart_targets: [verify_source_coverage]
+
+    synthesize_design:
+      type: agent
+      role: Complex workflow architect
+      task: |
+        Read the canonical request, source coverage, all source packets, project
+        analysis, and runtime contract. Inspect cited sources and project paths
+        when claims need confirmation. Do not edit project files or the generated
+        DAG. Reconcile sources using only declared precedence, retain unresolved
+        conflicts as blockers, assign stable global requirement IDs, and map each
+        requirement to project symbols, observable acceptance, and one ownership
+        cluster. Separate cross-cluster invariants from local rules.
+
+        Design the smallest reliable graph for the requested large task. Use
+        complete semantic analysis domains, one precedence-aware synthesis before
+        mutation, dependency-layered writers, only disjoint same-wave edit paths,
+        one serialized integrator for shared convergence files, independent
+        read-only audit lenses, one bounded residual writer, deterministic Bash
+        evidence interpreted by an agent, current-tree semantic acceptance, and a
+        narrow correction suffix only when each boundary is justified. A static
+        graph cannot dynamically create writers from a manifest: choose a fixed
+        topology matching the proven ownership clusters or serialize work. Do not
+        add nodes for symmetry.
+
+        Atomically write
+        .omp-swarm/author-complex-dag/run/handoffs/design.md containing READY or
+        BLOCKED; complete requirement-to-node traceability; confirmation or
+        rejection of every declared ownership cluster and convergence owner;
+        every node's outcome, inputs, owned project and evidence paths, forbidden
+        paths, verification, retry and failure behavior; exact edges and expected
+        waves; resolved workspace; acceptance commands; concurrency rationale;
+        and bounded restart targets. The generated file is fixed at
+        .omp/generated-complex-task.yaml with workspace: .. and must use the
+        prepare-approved overwrite policy and prior digest. Reject placeholder
+        commands, unspecified ownership, source staging, hidden dynamic inputs,
+        or a graph that treats dependency settlement as success.
+      waits_for: [verify_source_coverage, analyze_project, analyze_runtime]
+
+    author_dag:
+      type: agent
+      role: OMP swarm DAG implementer
+      task: |
+        Read the canonical request, runtime contract, and design. If the design is
+        BLOCKED, do not create or modify the generated DAG; report the blockers.
+        Otherwise confirm the canonical request records the fixed path
+        .omp/generated-complex-task.yaml and prepare-approved overwrite policy.
+        Write the complete standalone workflow atomically to that path, using the
+        verified prior digest when replacement was authorized. Edit no other
+        project path. Use only runtime-supported fields and add a schema directive
+        only when the target project has a valid schema path or URI.
+
+        Encode every dependency edge explicitly. Use a safe unique swarm name,
+        workspace: .., target_count: 1 unless genuine whole-graph iteration is
+        proven, and concurrency no wider than safe agent fan-out. Every modifying
+        task must name outcome, bounded inspection, upstream reads, exact editable
+        and forbidden paths, focused verification, evidence output, idempotent
+        retry, and blocker behavior. Every Bash node must use an exact
+        request-supplied deterministic command, unique safe output path, explicit
+        cwd, and parseable exit marker; an agent must interpret every meaningful
+        Bash result. Every control node must always emit one valid decision and
+        use bounded restart policy and valid upstream targets. Never leave TODOs,
+        placeholders, mock work, destructive cleanup, or ordinary source copies
+        under run/.
+
+        Atomically write
+        .omp-swarm/author-complex-dag/run/handoffs/authoring.md with requirement
+        coverage, project ownership, evidence paths, expected waves, and blockers.
+        Reruns repair the current output idempotently instead of duplicating it.
+      waits_for: [synthesize_design]
+
+    validate_initial:
+      type: bash
+      command: |
+        omp-swarm validate .omp/generated-complex-task.yaml
+        status=$?
+        printf '\nVALIDATION_EXIT=%s\n' "$status"
+        exit "$status"
+      output_path: .omp-swarm/author-complex-dag/run/reports/validation-initial.txt
+      cwd: .
+      waits_for: [author_dag]
+
+    audit_traceability:
+      type: agent
+      role: Independent requirement and source coverage auditor
+      task: |
+        Read the canonical request, source packets, source coverage, project
+        analysis, design, authoring report, initial validation output, and actual
+        generated DAG. Inspect cited source and project files. Do not edit files.
+        Verify precedence, stable requirement traceability, complete acceptance,
+        and that every required behavior has a producer and an independent
+        acceptance path. Reject invented scope, omitted boundaries, summary-only
+        review, and uncited decisions. Atomically write PASS, actionable FINDINGS,
+        or BLOCKER with exact source IDs, citations, paths, node IDs, observed and
+        required behavior, and focused acceptance to
+        .omp-swarm/author-complex-dag/run/reports/audit-traceability.md.
+      waits_for: [validate_initial]
+
+    audit_scheduling:
+      type: agent
+      role: Independent scheduling and path-safety auditor
+      task: |
+        Read the design, runtime contract, initial validation output, and actual
+        generated DAG. Reinspect the installed skill references and available
+        schema as needed. Do not edit files. Verify supported fields, workspace,
+        complete explicit edges, intended waves, concurrency, one writer per
+        mutable path per wave, serialized convergence paths, unique evidence
+        writers, Bash failure interpretation, valid control ancestry, bounded
+        rewind, and idempotence against persistent source edits. Atomically write
+        PASS, actionable FINDINGS, or BLOCKER to
+        .omp-swarm/author-complex-dag/run/reports/audit-scheduling.md.
+      waits_for: [validate_initial]
+
+    audit_scale_and_recovery:
+      type: agent
+      role: Independent large-task operability auditor
+      task: |
+        Read the request, design, initial validation output, and actual generated
+        DAG. Do not edit files. Stress-review complete source partitioning, bounded
+        agent contexts, useful fan-out and fan-in, no gratuitous symmetry, no
+        writer self-approval, actual-tree review, actionable handoffs,
+        deterministic evidence, correction ownership, and a recovery suffix that
+        preserves settled analysis. Flag overloaded agents and fragmentation that
+        adds handoffs without independent ownership or review. Require safe
+        failure on missing evidence, unresolved precedence, ownership overlap, or
+        acceptance work outside the declared envelope. Atomically write PASS,
+        actionable FINDINGS, or BLOCKER to
+        .omp-swarm/author-complex-dag/run/reports/audit-scale-and-recovery.md.
+      waits_for: [validate_initial]
+
+    repair_dag:
+      type: agent
+      role: Bounded generated-DAG remediation specialist
+      task: |
+        Read the request, analyses, design, authoring report, all three audits,
+        initial validation output, and the latest final decision when present.
+        Confirm every finding against current evidence and the actual generated
+        DAG. Edit only .omp/generated-complex-task.yaml. Never edit project source,
+        inputs, sibling-owned reports, or runtime .swarm_* paths. Fix every
+        confirmed in-scope defect without widening the design's mutation envelope.
+        Preserve correct content and remain idempotent across rewinds. Treat edits
+        needed outside the generated DAG, missing source evidence, irreconcilable
+        requirements, or request changes as blockers. Atomically write finding
+        dispositions, exact fixes, requirement IDs, blockers, and focused evidence
+        or explicit NO-OP to
+        .omp-swarm/author-complex-dag/run/reports/repair.md.
+      waits_for:
+        [audit_traceability, audit_scheduling, audit_scale_and_recovery]
+
+    validate_final:
+      type: bash
+      command: |
+        omp-swarm validate .omp/generated-complex-task.yaml
+        status=$?
+        printf '\nVALIDATION_EXIT=%s\n' "$status"
+        exit "$status"
+      output_path: .omp-swarm/author-complex-dag/run/reports/validation-final.txt
+      cwd: .
+      waits_for: [repair_dag]
+
+    semantic_acceptance:
+      type: agent
+      role: Independent generated-workflow semantic reviewer
+      task: |
+        Read the request, source evidence, design, audits, repair report, and
+        actual generated DAG. Inspect actual cited source and project files. Do
+        not edit files. Recheck complete source coverage, precedence and blocker
+        handling, source-before-mutation ordering, exact path ownership,
+        convergence-file serialization, bounded caller analysis for public
+        changes, independent review, command plus semantic acceptance, and an
+        idempotent correction suffix. Atomically write PASS, actionable FINDINGS,
+        or BLOCKER with concrete reproduction to
+        .omp-swarm/author-complex-dag/run/reports/semantic-acceptance.md.
+      waits_for: [repair_dag]
+
+    validation_acceptance:
+      type: agent
+      role: Swarm validation evidence reviewer
+      task: |
+        Read the design, repair report, final validation output, and actual
+        generated DAG. Do not edit files. PASS only when the report contains
+        VALIDATION_EXIT=0 and Validation: ok, printed waves match the design's
+        dependency and ownership order, workspace resolves to the intended
+        existing project, and no placeholder or unsafe path remains. Missing,
+        malformed, stale, or non-zero evidence is FINDINGS or BLOCKER, never
+        implicit success. Atomically write PASS, actionable FINDINGS, or BLOCKER
+        to .omp-swarm/author-complex-dag/run/reports/validation-acceptance.md.
+      waits_for: [validate_final]
+
+    final_decision:
+      type: agent
+      role: Final generated-DAG acceptance controller
+      task: |
+        Read the request, design, repair report, semantic acceptance, validation
+        acceptance, and actual generated DAG. Verify reports against current
+        source. Do not edit project files. Atomically write a final disposition to
+        .omp-swarm/author-complex-dag/run/reports/final-decision.md and exactly one
+        .omp-swarm/author-complex-dag/run/signals/final.control.yaml decision.
+
+        Continue only when both acceptance reports PASS, validation is current and
+        zero, every request requirement is traced, and no blocker remains. For a
+        confirmed defect fixable solely in .omp/generated-complex-task.yaml,
+        restart repair_dag with a concrete reason. Fail for missing evidence,
+        unresolved conflicts, unsafe or out-of-envelope correction, request drift,
+        or exhausted correction scope. Never restart preparation, source reading,
+        synthesis, or audits. Always replace both outputs atomically.
+      waits_for: [semantic_acceptance, validation_acceptance]
+      control:
+        signal: .omp-swarm/author-complex-dag/run/signals/final.control.yaml
+        allowed_restart_targets: [repair_dag]

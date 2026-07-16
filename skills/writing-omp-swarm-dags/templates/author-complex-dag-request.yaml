@@ -1,0 +1,53 @@
+goal: Implement the cited specification without changing public compatibility.
+completion: All traced requirements and supplied commands pass.
+project:
+  anchors: [package.json, src]
+  inspect: [package.json, src, docs/specs]
+generated_dag:
+  path: .omp/generated-complex-task.yaml
+  overwrite: fail-if-exists
+source_reading:
+  shard_count: 8
+  max_estimated_tokens_per_shard: 60000
+sources:
+  - id: core-contract
+    path: docs/specs/core.md
+    domain: shared-contracts
+    authority: primary-specification
+    status: normative
+    estimated_tokens: 12000
+  - id: feature-rules
+    path: docs/specs/features.md
+    domain: feature-packages
+    authority: primary-specification
+    status: normative
+    estimated_tokens: 18000
+precedence: Amendments override the primary specification; unresolved ties block.
+mutable_paths: [src/contracts, src/features/a, src/features/b, src/index.ts]
+forbidden_paths: [package.json, bun.lock]
+ownership:
+  clusters:
+    - id: shared-contracts
+      paths: [src/contracts]
+      depends_on: []
+      focused_checks: [project-check]
+    - id: feature-a
+      paths: [src/features/a]
+      depends_on: [shared-contracts]
+      focused_checks: [project-check]
+    - id: feature-b
+      paths: [src/features/b]
+      depends_on: [shared-contracts]
+      focused_checks: [project-check]
+  convergence:
+    - id: public-exports
+      paths: [src/index.ts]
+      sole_owner: public-exports-writer
+      depends_on: [feature-a, feature-b]
+      focused_checks: [project-check]
+acceptance_commands:
+  - id: project-check
+    cwd: .
+    command: bun check
+    mutable_outputs: [.eslintcache]
+constraints: Preserve unrelated work; do not add dependencies.
