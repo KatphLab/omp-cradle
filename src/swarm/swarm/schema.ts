@@ -9,6 +9,27 @@ interface RawSwarmNodeControlConfig {
   allowed_restart_targets?: unknown
 }
 
+interface RawModelUsageEstimateConfig {
+  input_tokens?: unknown
+  output_tokens?: unknown
+  cache_read_tokens?: unknown
+  cache_write_tokens?: unknown
+}
+
+interface RawSwarmModelRoutingConfig {
+  enabled?: unknown
+  allowed_aliases?: unknown
+  minimum_quality?: unknown
+  max_estimated_cost_usd?: unknown
+  allow_zero_marginal_cost?: unknown
+  default_usage?: unknown
+}
+
+interface RawSwarmAgentWorkloadConfig {
+  profile?: unknown
+  estimated_usage?: unknown
+}
+
 interface RawSwarmAgentConfig {
   type?: unknown
   role?: unknown
@@ -19,6 +40,7 @@ interface RawSwarmAgentConfig {
   model?: unknown
   tools?: unknown
   control?: unknown
+  workload?: unknown
   [key: string]: unknown
 }
 
@@ -61,6 +83,7 @@ interface RawSwarmConfig {
   concurrency?: unknown
   model?: unknown
   restart_policy?: unknown
+  model_routing?: unknown
   nodes?: unknown
 }
 
@@ -70,6 +93,32 @@ interface SwarmRestartPolicy {
   maxRestarts: number
   maxRestartsPerTarget: number
   maxNodeAttempts: number
+}
+
+export type ModelRoutingQuality = 'economy' | 'standard' | 'premium'
+
+export type SwarmWorkloadProfile =
+  'general' | 'implementation' | 'planning' | 'review' | 'design' | 'vision'
+
+export interface ModelUsageEstimate {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+export interface SwarmModelRoutingPolicy {
+  enabled: true
+  allowedAliases: string[]
+  minimumQuality: ModelRoutingQuality
+  maxEstimatedCostUsd: number
+  allowZeroMarginalCost: boolean
+  defaultUsage: ModelUsageEstimate
+}
+
+export interface SwarmAgentWorkload {
+  profile: SwarmWorkloadProfile
+  estimatedUsage?: ModelUsageEstimate
 }
 
 export interface SwarmNodeControl {
@@ -93,6 +142,7 @@ export interface SwarmAgent extends SwarmNodeBase {
   extraContext?: string
   model?: string
   control?: SwarmNodeControl
+  workload?: SwarmAgentWorkload
   tools?: string[]
 }
 
@@ -128,6 +178,7 @@ export interface SwarmDefinition {
   targetCount: number
   concurrency: number
   model?: string
+  modelRouting?: SwarmModelRoutingPolicy
   restartPolicy?: SwarmRestartPolicy
   nodes: Map<string, SwarmNode>
   nodeOrder: string[]
@@ -140,6 +191,38 @@ export interface SwarmDefinition {
 
 const VALID_MODES: readonly SwarmMode[] = ['pipeline', 'parallel', 'sequential']
 const VALID_SWARM_NAME = /^[\w.-]+$/
+const VALID_ROUTING_QUALITIES: readonly ModelRoutingQuality[] = [
+  'economy',
+  'standard',
+  'premium',
+]
+const VALID_WORKLOAD_PROFILES: readonly SwarmWorkloadProfile[] = [
+  'general',
+  'implementation',
+  'planning',
+  'review',
+  'design',
+  'vision',
+]
+
+const MODEL_ROUTING_PROPERTIES: Record<string, true> = {
+  enabled: true,
+  allowed_aliases: true,
+  minimum_quality: true,
+  max_estimated_cost_usd: true,
+  allow_zero_marginal_cost: true,
+  default_usage: true,
+}
+const WORKLOAD_PROPERTIES: Record<string, true> = {
+  profile: true,
+  estimated_usage: true,
+}
+const USAGE_ESTIMATE_PROPERTIES: Record<string, true> = {
+  input_tokens: true,
+  output_tokens: true,
+  cache_read_tokens: true,
+  cache_write_tokens: true,
+}
 
 export function parseSwarmYaml(content: string): SwarmDefinition {
   return parseSwarmConfig(extractRawSwarm(Bun.YAML.parse(content)))
@@ -184,6 +267,9 @@ function parseSwarmConfig(swarm: RawSwarmConfig): SwarmDefinition {
   }
   if (typeof swarm.model === 'string') {
     swarmDefinition.model = swarm.model.trim()
+  }
+  if (swarm.model_routing !== undefined) {
+    swarmDefinition.modelRouting = parseModelRoutingPolicy(swarm.model_routing)
   }
   if (swarm.restart_policy !== undefined) {
     swarmDefinition.restartPolicy = parseRestartPolicy(swarm.restart_policy)
@@ -310,6 +396,9 @@ function parseAgentNode(name: string, config: RawSwarmAgentConfig): SwarmAgent {
   if (typeof config.model === 'string') {
     agent.model = config.model.trim()
   }
+  if (config.workload !== undefined) {
+    agent.workload = parseAgentWorkload(name, config.workload)
+  }
   if (config.control !== undefined) {
     agent.control = parseNodeControl('Agent', name, config.control)
   }
@@ -435,6 +524,122 @@ function applyGraphOptions(
     graph.control = parseNodeControl('Graph', name, config.control)
 }
 
+function parseModelRoutingPolicy(value: unknown): SwarmModelRoutingPolicy {
+  if (!isRecord(value)) {
+    throw new Error('swarm.model_routing must be an object')
+  }
+  assertAllowedProperties(
+    value,
+    MODEL_ROUTING_PROPERTIES,
+    'swarm.model_routing',
+  )
+  const config = value as RawSwarmModelRoutingConfig
+  if (config.enabled !== true) {
+    throw new Error('swarm.model_routing.enabled must be true')
+  }
+  const allowedAliases = parseRequiredUniqueStrings(
+    config.allowed_aliases,
+    'swarm.model_routing.allowed_aliases',
+  )
+  const minimumQuality = parseEnum(
+    config.minimum_quality,
+    VALID_ROUTING_QUALITIES,
+    'swarm.model_routing.minimum_quality',
+  )
+  const maxEstimatedCostUsd = numberOrNaN(config.max_estimated_cost_usd)
+  if (typeof config.allow_zero_marginal_cost !== 'boolean') {
+    throw new TypeError(
+      'swarm.model_routing.allow_zero_marginal_cost is required and must be a boolean',
+    )
+  }
+  return {
+    enabled: true,
+    allowedAliases,
+    minimumQuality,
+    maxEstimatedCostUsd,
+    allowZeroMarginalCost: config.allow_zero_marginal_cost,
+    defaultUsage: parseUsageEstimate(
+      config.default_usage,
+      'swarm.model_routing.default_usage',
+    ),
+  }
+}
+
+function parseAgentWorkload(name: string, value: unknown): SwarmAgentWorkload {
+  const label = `Agent '${name}' workload`
+  if (!isRecord(value)) throw new Error(`${label} must be an object`)
+  assertAllowedProperties(value, WORKLOAD_PROPERTIES, label)
+  const config = value as RawSwarmAgentWorkloadConfig
+  const workload: SwarmAgentWorkload = {
+    profile: parseEnum(
+      config.profile,
+      VALID_WORKLOAD_PROFILES,
+      `${label}.profile`,
+    ),
+  }
+  if (config.estimated_usage !== undefined) {
+    workload.estimatedUsage = parseUsageEstimate(
+      config.estimated_usage,
+      `${label}.estimated_usage`,
+    )
+  }
+  return workload
+}
+
+function parseUsageEstimate(value: unknown, label: string): ModelUsageEstimate {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`)
+  assertAllowedProperties(value, USAGE_ESTIMATE_PROPERTIES, label)
+  const config = value as RawModelUsageEstimateConfig
+  return {
+    inputTokens: parseTokenCount(config.input_tokens, `${label}.input_tokens`),
+    outputTokens: parseTokenCount(
+      config.output_tokens,
+      `${label}.output_tokens`,
+    ),
+    cacheReadTokens: parseTokenCount(
+      config.cache_read_tokens,
+      `${label}.cache_read_tokens`,
+    ),
+    cacheWriteTokens: parseTokenCount(
+      config.cache_write_tokens,
+      `${label}.cache_write_tokens`,
+    ),
+  }
+}
+
+function parseTokenCount(value: unknown, label: string): number {
+  if (typeof value !== 'number') {
+    throw new TypeError(`${label} is required and must be a number`)
+  }
+  return value
+}
+
+function parseEnum<T extends string>(
+  value: unknown,
+  choices: readonly T[],
+  label: string,
+): T {
+  const match = choices.find((choice) => choice === value)
+  if (match !== undefined) return match
+  throw new Error(`${label} must be one of ${choices.join(', ')}`)
+}
+
+function parseRequiredUniqueStrings(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${label} must be a non-empty array`)
+  }
+  const result = value.map((item) =>
+    typeof item === 'string' ? item.trim() : '',
+  )
+  if (
+    result.some((item) => item.length === 0) ||
+    new Set(result).size !== result.length
+  ) {
+    throw new Error(`${label} must contain unique, non-empty strings`)
+  }
+  return result
+}
+
 function parseRestartPolicy(value: unknown): SwarmRestartPolicy {
   if (!isRecord(value))
     throw new Error(`swarm.restart_policy must be an object`)
@@ -494,6 +699,19 @@ function stringArray(value: unknown): string[] {
     .filter((item) => item.length > 0)
 }
 
+function assertAllowedProperties(
+  value: Record<string, unknown>,
+  allowed: Readonly<Record<string, true>>,
+  label: string,
+): void {
+  const unknownProperty = Object.keys(value).find(
+    (key) => !Object.hasOwn(allowed, key),
+  )
+  if (unknownProperty !== undefined) {
+    throw new Error(`${label} contains unknown property '${unknownProperty}'`)
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -509,14 +727,67 @@ export function validateSwarmDefinition(
   validateNodeReferences(swarmDefinition, nodeNames, errors)
   validateTargetCount(swarmDefinition, errors)
   validateConcurrency(swarmDefinition, errors)
-
-  for (const graph of swarmDefinition.graphs.values()) {
-    if (graph.definition !== undefined) {
-      errors.push(...validateSwarmDefinition(graph.definition))
-    }
+  validateModelRoutingShape(swarmDefinition.modelRouting, errors)
+  for (const [name, agent] of swarmDefinition.agents) {
+    validateWorkload(agent.workload, `Agent '${name}' workload`, errors)
   }
 
   return errors
+}
+
+function validateModelRoutingShape(
+  policy: SwarmModelRoutingPolicy | undefined,
+  errors: string[],
+): void {
+  if (policy === undefined) return
+  if (
+    !Number.isFinite(policy.maxEstimatedCostUsd) ||
+    policy.maxEstimatedCostUsd <= 0
+  ) {
+    errors.push(
+      'swarm.model_routing.max_estimated_cost_usd must be a finite number greater than zero',
+    )
+  }
+  validateUsageEstimate(
+    policy.defaultUsage,
+    'swarm.model_routing.default_usage',
+    errors,
+  )
+}
+
+function validateWorkload(
+  workload: SwarmAgentWorkload | undefined,
+  label: string,
+  errors: string[],
+): void {
+  if (workload?.estimatedUsage !== undefined) {
+    validateUsageEstimate(
+      workload.estimatedUsage,
+      `${label}.estimated_usage`,
+      errors,
+    )
+  }
+}
+
+function validateUsageEstimate(
+  usage: ModelUsageEstimate,
+  label: string,
+  errors: string[],
+): void {
+  const buckets: [string, number][] = [
+    ['input_tokens', usage.inputTokens],
+    ['output_tokens', usage.outputTokens],
+    ['cache_read_tokens', usage.cacheReadTokens],
+    ['cache_write_tokens', usage.cacheWriteTokens],
+  ]
+  for (const [name, value] of buckets) {
+    if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+      errors.push(`${label}.${name} must be a finite non-negative integer`)
+    }
+  }
+  if (buckets.every(([, value]) => value === 0)) {
+    errors.push(`${label} must contain at least one positive token count`)
+  }
 }
 
 function validateModel(

@@ -89,6 +89,8 @@ omp-swarm restart path/to/swarm.yaml
 
 Restart resumes prior state only when the root and imported YAML definitions are unchanged. It reuses eligible settled nodes and reruns unfinished or invalidated work. It does not verify that settled-node artifacts or source files still exist and does not restore the working tree.
 
+For a routed DAG, restart also requires the persisted versioned routing plan. It reuses the original selected aliases, planned concrete models, costs, and assumptions rather than reranking against the current catalog. OMP may resolve the persisted alias to a different concrete fallback during execution; state `resolvedModel` records that runtime model without changing the planned audit record. Legacy state without a routing plan cannot be resumed as routed; start a fresh normal run.
+
 Do not clean the DAG's current run directory before restart. Preserve the handoffs, reports, signals, and project edits required by reused nodes. A fresh normal run may clean only the DAG-owned run directory according to `artifact-lifecycle.md`.
 
 Keep control loops bounded and purposeful. For an ordinary one-pass source change, explicit implementation → check → review edges may be sufficient; add rewind only when automated correction is a required workflow behavior.

@@ -1,0 +1,63 @@
+# Planning-only example. Inspect it with:
+#   omp-swarm plan-models src/swarm/sample-graphs/model-routing.yaml
+# Do not run this DAG merely to verify routing; its tasks are illustrative.
+swarm:
+  name: model-routing-plan-example
+  workspace: ../../..
+  mode: parallel
+  concurrency: 5
+  model_routing:
+    enabled: true
+    allowed_aliases:
+      - pi/smol
+      - pi/task
+      - pi/default
+      - pi/slow
+      - pi/plan
+      - pi/advisor
+      - pi/designer
+      - pi/vision
+    minimum_quality: economy
+    max_estimated_cost_usd: 100
+    allow_zero_marginal_cost: false
+    default_usage:
+      input_tokens: 30000
+      output_tokens: 6000
+      cache_read_tokens: 10000
+      cache_write_tokens: 5000
+  nodes:
+    planner:
+      type: agent
+      role: Planning example
+      workload:
+        profile: planning
+      task: This file is for plan-models only; describe a hypothetical plan without changing files.
+    implementer:
+      type: agent
+      role: Implementation example
+      workload:
+        profile: implementation
+        estimated_usage:
+          input_tokens: 50000
+          output_tokens: 10000
+          cache_read_tokens: 20000
+          cache_write_tokens: 8000
+      task: This file is for plan-models only; describe a hypothetical implementation without changing files.
+    reviewer:
+      type: agent
+      role: Review example
+      workload:
+        profile: review
+      task: This file is for plan-models only; describe a hypothetical review without changing files.
+    designer:
+      type: agent
+      role: Design example
+      workload:
+        profile: design
+      task: This file is for plan-models only; describe a hypothetical design without changing files.
+    vision_reviewer:
+      type: agent
+      role: Vision example
+      workload:
+        profile: vision
+      task: This file is for plan-models only; describe hypothetical image analysis without changing files.

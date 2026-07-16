@@ -5,6 +5,13 @@ import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { loadSwarmDefinitionFile } from './swarm/loader'
+import {
+  assertModelRoutingPlanCompatible,
+  buildModelRoutingPlan,
+  type ModelRoutingPlan,
+  normalizeModelRoutingCatalogError,
+  renderModelRoutingPlan,
+} from './swarm/model-routing'
 import { PipelineController } from './swarm/pipeline'
 import {
   buildValidatedExecutionWaves,
@@ -15,6 +22,7 @@ import type { SwarmDefinition } from './swarm/schema'
 import {
   createInitializedStateTracker,
   createRestartStateTracker,
+  loadPersistedModelRoutingPlan,
 } from './swarm/state'
 
 function writeLine(message = ''): void {
@@ -25,11 +33,13 @@ function usageLines(): string[] {
   return [
     'Usage: omp-swarm <path-to-yaml>',
     '       omp-swarm restart <path-to-yaml>',
+    '       omp-swarm plan-models <path-to-yaml>',
     '       omp-swarm validate <path-to-yaml>',
     '       omp-swarm --help',
     '',
     'Commands:',
     '  restart <path-to-yaml>   Resume from prior state; starts fresh when no state is found',
+    '  plan-models <path-to-yaml> Refresh the authenticated catalog and print a model plan without initializing state or running nodes',
     '  validate <path-to-yaml>  Validate a swarm YAML file without running it',
     '',
     'Options:',
@@ -100,9 +110,12 @@ if (commandOrPath === '--help' || commandOrPath === '-h') {
 }
 
 const isValidateCommand = commandOrPath === 'validate'
+const isPlanModelsCommand = commandOrPath === 'plan-models'
 const isRestartCommand = commandOrPath === 'restart'
 const yamlPath =
-  isValidateCommand || isRestartCommand ? maybePath : commandOrPath
+  isValidateCommand || isRestartCommand || isPlanModelsCommand
+    ? maybePath
+    : commandOrPath
 if (!yamlPath) {
   writeUsageError()
   process.exit(1)
@@ -150,11 +163,61 @@ try {
     ? swarmDefinition.workspace
     : path.resolve(path.dirname(resolvedPath), swarmDefinition.workspace)
 
+  if (isPlanModelsCommand && swarmDefinition.modelRouting === undefined) {
+    throw new Error(
+      'Model planning requires swarm.model_routing.enabled: true at the root.',
+    )
+  }
+
+  let routingPlan: ModelRoutingPlan | undefined
+  let routedModelRegistry: ModelRegistry | undefined
+  let routedSettings: Settings | undefined
+  if (swarmDefinition.modelRouting !== undefined) {
+    const persisted = isRestartCommand
+      ? await loadPersistedModelRoutingPlan(workspace, swarmDefinition)
+      : undefined
+    if (persisted?.loadedExistingState) {
+      assertModelRoutingPlanCompatible(
+        swarmDefinition,
+        persisted.modelRoutingPlan,
+      )
+      routingPlan = persisted.modelRoutingPlan
+    }
+    if (!persisted?.alreadyCompleted) {
+      let refreshedAt: number
+      try {
+        const authStorage = await discoverAuthStorage()
+        const settings = await Settings.loadReadOnly({ cwd: workspace })
+        const modelRegistry = new ModelRegistry(authStorage)
+        await modelRegistry.refresh('online-if-uncached')
+        refreshedAt = Date.now()
+        routedSettings = settings
+        routedModelRegistry = modelRegistry
+      } catch (error_) {
+        throw normalizeModelRoutingCatalogError(error_)
+      }
+      routingPlan ??= await buildModelRoutingPlan({
+        definition: swarmDefinition,
+        modelRegistry: routedModelRegistry,
+        settings: routedSettings,
+        refreshedAt,
+      })
+    }
+  }
+
+  if (isPlanModelsCommand) {
+    if (routingPlan === undefined) {
+      throw new Error('No model routing plan was produced.')
+    }
+    writeLine(renderModelRoutingPlan(routingPlan).join('\n'))
+    process.exit(0)
+  }
+
   await fs.mkdir(workspace, { recursive: true })
   writeLine(`Workspace: ${workspace}`)
 
   const restartPlan = isRestartCommand
-    ? await createRestartStateTracker(workspace, swarmDefinition)
+    ? await createRestartStateTracker(workspace, swarmDefinition, routingPlan)
     : undefined
   if (restartPlan !== undefined) {
     writeLine(restartPlan.message)
@@ -166,13 +229,25 @@ try {
   }
   const stateTracker =
     restartPlan?.stateTracker ??
-    (await createInitializedStateTracker(workspace, swarmDefinition))
+    (await createInitializedStateTracker(
+      workspace,
+      swarmDefinition,
+      routingPlan,
+    ))
 
   const containsAgents = definitionContainsAgents(swarmDefinition)
-  const authStorage = containsAgents ? await discoverAuthStorage() : undefined
+  const authStorage =
+    routedModelRegistry === undefined && containsAgents
+      ? await discoverAuthStorage()
+      : undefined
   const modelRegistry =
-    authStorage === undefined ? undefined : new ModelRegistry(authStorage)
-  const settings = containsAgents ? await Settings.loadReadOnly() : undefined
+    routedModelRegistry ??
+    (authStorage === undefined ? undefined : new ModelRegistry(authStorage))
+  const settings =
+    routedSettings ??
+    (containsAgents
+      ? await Settings.loadReadOnly({ cwd: workspace })
+      : undefined)
 
   let lastProgressDump = 0
   const PROGRESS_INTERVAL_MS = 5000
@@ -184,6 +259,7 @@ try {
     swarmDefinition,
     waves,
     stateTracker,
+    routingPlan,
   )
   const result = await controller.run({
     workspace,
@@ -222,8 +298,8 @@ try {
   writeLine(lines.join('\n'))
   process.exit(result.status === 'completed' ? 0 : 1)
 } catch (error_) {
-  const error = error_ instanceof Error ? error_.message : String(error_)
-  console.error(error)
+  const error = error_ instanceof Error ? error_ : new Error(String(error_))
+  console.error(error.message)
   process.exit(1)
 }
 

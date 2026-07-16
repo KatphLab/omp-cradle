@@ -47,6 +47,8 @@ Parent dependencies address the graph node as a unit; they cannot name child nod
 
 An imported or inline child's agent-level model overrides its own `swarm.model`; parent model settings are not inherited into the child.
 
+With root `model_routing` enabled, routing policy is the exception: it is authoritative across recursively hydrated children. A child may omit it to inherit or declare an enabled policy that only narrows allowed aliases, raises quality, lowers its subtree cost cap, disables zero marginal cost, and increases token assumptions. It cannot introduce routing beneath a non-routed root.
+
 ## Fixed Graph Repeat
 
 ```yaml

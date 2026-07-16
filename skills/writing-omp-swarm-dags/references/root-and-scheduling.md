@@ -26,10 +26,13 @@ swarm:
 | `target_count`   | no          | Integer `>= 1`; default `1`; values above `1` require `pipeline`.                                                                                                  |
 | `concurrency`    | yes         | Integer `>= 1`; maximum simultaneous agent nodes across the root and imported graphs. Bash nodes do not consume this budget.                                       |
 | `model`          | no          | Non-empty default model selector for agents declared in this graph. An agent-level model overrides it. Imported children use their own agent/graph model settings. |
+| `model_routing`  | no          | Opt-in cost-aware alias routing performed recursively before state initialization; read `model-routing.md`.                                                        |
 | `restart_policy` | conditional | Required in this graph when any local agent or graph declares `control`; read `control-and-recovery.md`.                                                           |
 | `nodes`          | yes         | Non-empty map of local node IDs to `agent`, `bash`, or `graph` definitions.                                                                                        |
 
 The runner resolves a relative workspace from the root YAML's directory and creates it if absent. `omp-swarm validate` does not create or inspect the workspace; project anchors need a workflow guard.
+
+`omp-swarm validate` remains offline, including for routed DAGs: it does not discover authentication, load mutable settings, refresh the model catalog, resolve aliases, or create state. Use `omp-swarm plan-models path/to/swarm.yaml` for the authenticated read-only catalog refresh and complete pre-execution cost plan.
 
 ## Dependency Fields
 

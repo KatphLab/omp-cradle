@@ -24,6 +24,7 @@ implement:
 | `task`          | yes      | Non-empty objective and project-state contract.                                                     |
 | `extra_context` | no       | Additional system-prompt context; do not hide required task inputs or outputs here.                 |
 | `model`         | no       | Non-empty node override; otherwise this graph's `swarm.model` or configured default applies.        |
+| `workload`      | no       | Routing profile plus optional replacement token estimate; read `model-routing.md`.                  |
 | `tools`         | no       | Non-empty unique string list selecting native built-in tools; omitted means unrestricted built-ins. |
 | `waits_for`     | no       | Local upstream IDs; semantics live in `root-and-scheduling.md`.                                     |
 | `reports_to`    | no       | Local downstream IDs; semantics live in `root-and-scheduling.md`.                                   |
