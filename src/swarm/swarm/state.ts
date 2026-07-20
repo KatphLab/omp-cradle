@@ -91,6 +91,8 @@ export interface GraphState {
   childState?: SwarmState
 }
 
+type NodeState = AgentState | BashNodeState | GraphState
+
 interface SwarmDefinitionStateSummary {
   name: string
   workspace: string
@@ -413,6 +415,8 @@ export class StateTracker {
     startIteration: number,
     settledNodes: readonly string[],
     rerunNodes: readonly string[],
+    modelRoutingPlan?: ModelRoutingPlan,
+    graphPath = 'root',
   ): Promise<void> {
     await fs.mkdir(path.join(this.#swarmDir, 'state'), { recursive: true })
     await fs.mkdir(path.join(this.#swarmDir, 'logs'), { recursive: true })
@@ -420,6 +424,10 @@ export class StateTracker {
 
     const definitionSummary = buildDefinitionStateSummary(definition)
     const settled = new Set(settledNodes)
+    const rerun = new Set(rerunNodes)
+    const previousAgents = this.#state.agents
+    const previousBashNodes = this.#state.bashNodes
+    const previousGraphs = this.#state.graphs
     this.#state.status = 'running'
     this.#state.iteration = startIteration
     this.#state.targetCount = definition.targetCount
@@ -428,39 +436,61 @@ export class StateTracker {
     this.#state.definitionFingerprint =
       buildDefinitionFingerprint(definitionSummary)
     delete this.#state.completedAt
-
-    for (const nodeName of rerunNodes) {
-      if (settled.has(nodeName)) continue
-      const agent = definition.agents.get(nodeName)
-      if (agent !== undefined) {
-        this.#state.agents[nodeName] = createPendingAgentState(
-          nodeName,
-          this.#state.agents[nodeName],
-          startIteration,
-        )
-        continue
-      }
-
-      const bashNode = definition.bashNodes.get(nodeName)
-      if (bashNode !== undefined) {
-        this.#state.bashNodes[nodeName] = createPendingBashNodeState(
-          nodeName,
-          this.#state.bashNodes[nodeName],
-          startIteration,
-        )
-        continue
-      }
-
-      const graph = definition.graphs.get(nodeName)
-      if (graph !== undefined) {
-        this.#state.graphs[nodeName] = createPendingGraphState(
-          nodeName,
-          this.#state.graphs[nodeName],
-          startIteration,
-        )
-      }
+    if (modelRoutingPlan === undefined) {
+      delete this.#state.modelRoutingPlan
+    } else {
+      this.#state.modelRoutingPlan = sliceModelRoutingPlan(
+        modelRoutingPlan,
+        graphPath,
+      )
     }
 
+    this.#state.agents = Object.fromEntries(
+      [...definition.agents.keys()].map((name) => {
+        const previous = previousAgents[name]
+        if (settled.has(name) && previous !== undefined) {
+          return [name, previous]
+        }
+        const pending = createPendingAgentState(name, previous, startIteration)
+        const plannedModel =
+          modelRoutingPlan === undefined
+            ? undefined
+            : findModelRoutingNode(modelRoutingPlan, `${graphPath}/${name}`)
+                .selectedAlias
+        return [
+          name,
+          plannedModel === undefined
+            ? pending
+            : { ...pending, model: plannedModel },
+        ]
+      }),
+    )
+    this.#state.bashNodes = Object.fromEntries(
+      [...definition.bashNodes.keys()].map((name) => {
+        const previous = previousBashNodes[name]
+        return [
+          name,
+          settled.has(name) && previous !== undefined
+            ? previous
+            : createPendingBashNodeState(name, previous, startIteration),
+        ]
+      }),
+    )
+    this.#state.graphs = Object.fromEntries(
+      [...definition.graphs.keys()].map((name) => {
+        const previous = previousGraphs[name]
+        return [
+          name,
+          settled.has(name) && previous !== undefined
+            ? previous
+            : createPendingGraphState(name, previous, startIteration),
+        ]
+      }),
+    )
+
+    if (settled.size + rerun.size !== definition.nodes.size) {
+      throw new Error('Restart plan does not cover every current DAG node')
+    }
     await this.#persist()
   }
 
@@ -523,7 +553,7 @@ function createPendingNodeState<
   TStatus extends AgentStatus | BashNodeStatus | GraphStatus,
 >(
   name: string,
-  previous: AgentState | BashNodeState | GraphState | undefined,
+  previous: NodeState | undefined,
   iteration: number,
   wave: number,
   status: TStatus,
@@ -660,19 +690,23 @@ export async function loadPersistedModelRoutingPlan(
   const loadedState = await stateTracker.load()
   if (loadedState === undefined)
     return { loadedExistingState: false, alreadyCompleted: false }
+  assertPersistedDefinitionIntegrity(stateTracker, loadedState)
+  const definitionUnchanged =
+    loadedState.definitionFingerprint ===
+    buildDefinitionFingerprint(buildDefinitionStateSummary(definition))
   if (
     definition.modelRouting !== undefined &&
     loadedState.modelRoutingPlan === undefined
   ) {
     return {
       loadedExistingState: true,
-      alreadyCompleted: loadedState.status === 'completed',
+      alreadyCompleted:
+        loadedState.status === 'completed' && definitionUnchanged,
     }
   }
-  assertRestartFingerprintMatches(stateTracker, loadedState, definition)
   return {
     loadedExistingState: true,
-    alreadyCompleted: loadedState.status === 'completed',
+    alreadyCompleted: loadedState.status === 'completed' && definitionUnchanged,
     ...(loadedState.modelRoutingPlan === undefined
       ? {}
       : { modelRoutingPlan: loadedState.modelRoutingPlan }),
@@ -693,16 +727,13 @@ export async function createRestartStateTracker(
     return createNoStateRestartPlan(stateTracker, nodeNames)
   }
 
-  assertRestartFingerprintMatches(stateTracker, loadedState, definition)
-  if (loadedState.status === 'completed') {
-    return createCompletedRestartPlan(stateTracker, definition, nodeNames)
-  }
-
+  assertPersistedDefinitionIntegrity(stateTracker, loadedState)
   return await createResumableRestartPlan(
     stateTracker,
     definition,
     loadedState,
     nodeNames,
+    modelRoutingPlan,
   )
 }
 
@@ -722,34 +753,24 @@ function createNoStateRestartPlan(
   }
 }
 
-function assertRestartFingerprintMatches(
+function assertPersistedDefinitionIntegrity(
   stateTracker: StateTracker,
   loadedState: SwarmState,
-  definition: SwarmDefinition,
 ): void {
-  const currentSummary = buildDefinitionStateSummary(definition)
-  const currentFingerprint = buildDefinitionFingerprint(currentSummary)
-  if (loadedState.definitionFingerprint.length === 0) {
-    throw new Error(
-      [
-        'Prior swarm state cannot be resumed because the graph has changed or cannot be verified.',
-        '  - prior state does not include a DAG fingerprint',
-        `  - state dir: ${stateTracker.swarmDir}`,
-        'Run `omp-swarm <path-to-yaml>` to start from scratch and overwrite the saved state.',
-      ].join('\n'),
-    )
+  const fingerprint = loadedState.definitionFingerprint
+  const summary = loadedState.definitionSummary
+  if (
+    fingerprint.length > 0 &&
+    isDefinitionStateSummary(summary) &&
+    fingerprint === buildDefinitionFingerprint(summary)
+  ) {
+    return
   }
 
-  if (loadedState.definitionFingerprint === currentFingerprint) return
-
-  const diffLines = diffDefinitionSummaries(
-    loadedState.definitionSummary,
-    currentSummary,
-  )
   throw new Error(
     [
-      'Prior swarm state cannot be resumed because the graph has changed.',
-      ...diffLines.map((line) => `  - ${line}`),
+      'Prior swarm state cannot be resumed because its saved DAG definition is missing or corrupted.',
+      `  - state dir: ${stateTracker.swarmDir}`,
       'Run `omp-swarm <path-to-yaml>` to start from scratch and overwrite the saved state.',
     ].join('\n'),
   )
@@ -758,17 +779,20 @@ function assertRestartFingerprintMatches(
 function createCompletedRestartPlan(
   stateTracker: StateTracker,
   definition: SwarmDefinition,
-  nodeNames: string[],
+  settledNodes: string[],
+  definitionChanged: boolean,
 ): RestartResumePlan {
   return {
     stateTracker,
     loadedExistingState: true,
     alreadyCompleted: true,
     startIteration: definition.targetCount,
-    settledNodes: nodeNames,
+    settledNodes,
     rerunNodes: [],
     invalidatedNodes: [],
-    message: 'Prior state is already completed; nothing to restart',
+    message: definitionChanged
+      ? 'The DAG changed, but every current node is already settled; nothing to restart'
+      : 'Prior state is already completed; nothing to restart',
   }
 }
 
@@ -777,6 +801,7 @@ async function createResumableRestartPlan(
   definition: SwarmDefinition,
   loadedState: SwarmState,
   nodeNames: string[],
+  modelRoutingPlan?: ModelRoutingPlan,
 ): Promise<RestartResumePlan> {
   const startIteration = Math.min(
     Math.max(loadedState.iteration, 0),
@@ -788,15 +813,53 @@ async function createResumableRestartPlan(
     nodeNames,
     startIteration,
   )
+  const definitionChanged =
+    loadedState.definitionFingerprint !==
+    buildDefinitionFingerprint(buildDefinitionStateSummary(definition))
+  const needsMoreIterations =
+    loadedState.status === 'completed' &&
+    definition.targetCount > loadedState.targetCount
+  if (
+    loadedState.status === 'completed' &&
+    rerunNodes.length === 0 &&
+    !needsMoreIterations
+  ) {
+    if (definitionChanged) {
+      await stateTracker.prepareForRestart(
+        definition,
+        startIteration,
+        settledNodes,
+        rerunNodes,
+        modelRoutingPlan,
+      )
+      await stateTracker.updatePipeline({
+        status: 'completed',
+        completedAt: loadedState.completedAt ?? Date.now(),
+      })
+    }
+    return createCompletedRestartPlan(
+      stateTracker,
+      definition,
+      settledNodes,
+      definitionChanged,
+    )
+  }
 
   await stateTracker.prepareForRestart(
     definition,
     startIteration,
     settledNodes,
     rerunNodes,
+    modelRoutingPlan,
   )
+  const definitionChanges = definitionChanged
+    ? diffDefinitionSummaries(
+        loadedState.definitionSummary,
+        buildDefinitionStateSummary(definition),
+      )
+    : []
   await stateTracker.appendOrchestratorLog(
-    `Restart prepared: iteration=${startIteration + 1}/${definition.targetCount} settled=[${settledNodes.join(', ')}] rerun=[${rerunNodes.join(', ')}]`,
+    `Restart prepared: iteration=${startIteration + 1}/${definition.targetCount} settled=[${settledNodes.join(', ')}] rerun=[${rerunNodes.join(', ')}] definitionChanges=${definitionChanges.length}`,
   )
 
   return {
@@ -807,7 +870,9 @@ async function createResumableRestartPlan(
     settledNodes,
     rerunNodes,
     invalidatedNodes,
-    message: `Restarting from saved state: settled ${settledNodes.length}, rerun ${rerunNodes.length}`,
+    message: definitionChanged
+      ? `DAG changed safely; reusing ${settledNodes.length} compatible completed node(s) and rerunning ${rerunNodes.length}`
+      : `Restarting from saved state: settled ${settledNodes.length}, rerun ${rerunNodes.length}`,
   }
 }
 
@@ -822,7 +887,7 @@ function planRestartNodes(
   settledNodes: string[]
 } {
   const reusableNodes = nodeNames.filter((name) =>
-    isNodeReusable(loadedState, name, startIteration),
+    isNodeReusable(definition, loadedState, name, startIteration),
   )
   const reusableNodeSet = new Set(reusableNodes)
   const restartRoots = nodeNames.filter((name) => !reusableNodeSet.has(name))
@@ -1017,15 +1082,78 @@ function createEmptyDefinitionSummary(
 }
 
 function isNodeReusable(
+  definition: SwarmDefinition,
   state: SwarmState,
   nodeName: string,
   iteration: number,
 ): boolean {
-  const node =
-    state.agents[nodeName] ??
-    state.bashNodes[nodeName] ??
-    state.graphs[nodeName]
-  return node?.status === 'completed' && node.iteration === iteration
+  const currentNode = definition.nodes.get(nodeName)
+  const priorNode = state.definitionSummary.nodes.find(
+    (node) => node.name === nodeName,
+  )
+  if (currentNode === undefined || priorNode?.type !== currentNode.type) {
+    return false
+  }
+  switch (currentNode.type) {
+    case 'agent': {
+      return isCompletedNodeState(state.agents[nodeName], iteration)
+    }
+    case 'bash': {
+      return isCompletedNodeState(state.bashNodes[nodeName], iteration)
+    }
+    case 'graph': {
+      return isCompletedNodeState(state.graphs[nodeName], iteration)
+    }
+  }
+}
+
+function isCompletedNodeState(
+  node: NodeState | undefined,
+  iteration: number,
+): boolean {
+  if (node === undefined) return false
+  return node.status === 'completed' && node.iteration === iteration
+}
+
+function isDefinitionStateSummary(
+  value: unknown,
+): value is SwarmDefinitionStateSummary {
+  if (!isRecord(value)) return false
+  const nodes = value['nodes']
+  if (!Array.isArray(nodes)) return false
+  const names = new Set<string>()
+  for (const node of nodes) {
+    if (!isDefinitionStateNodeSummary(node) || names.has(node.name)) {
+      return false
+    }
+    names.add(node.name)
+  }
+  return true
+}
+
+function isDefinitionStateNodeSummary(
+  value: unknown,
+): value is SwarmDefinitionNodeSummary {
+  if (!isRecord(value) || typeof value['name'] !== 'string') return false
+  switch (value['type']) {
+    case 'agent':
+    case 'bash': {
+      return true
+    }
+    case 'graph': {
+      return (
+        value['definition'] === undefined ||
+        isDefinitionStateSummary(value['definition'])
+      )
+    }
+    default: {
+      return false
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 const EMPTY_NODE_SUMMARIES: readonly SwarmDefinitionNodeSummary[] = []

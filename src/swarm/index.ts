@@ -12,6 +12,7 @@ import {
   buildModelRoutingPlan,
   type ModelRoutingPlan,
   normalizeModelRoutingCatalogError,
+  selectPersistedModelRoutingPlan,
 } from './swarm/model-routing'
 import type { PipelineResult } from './swarm/pipeline'
 import { PipelineController } from './swarm/pipeline'
@@ -273,20 +274,20 @@ async function prepareExtensionRoutingPlan(
   const persisted = restart
     ? await loadPersistedModelRoutingPlan(workspace, definition)
     : undefined
-  if (persisted?.loadedExistingState) {
-    assertModelRoutingPlanCompatible(definition, persisted.modelRoutingPlan)
-  }
+  const savedPlan = selectPersistedModelRoutingPlan(
+    definition,
+    persisted?.modelRoutingPlan,
+    persisted?.loadedExistingState ?? false,
+  )
   if (persisted?.alreadyCompleted) {
-    if (persisted.modelRoutingPlan === undefined) {
-      throw new Error('Completed routed state has no model routing plan.')
-    }
-    return { routingPlan: persisted.modelRoutingPlan }
+    assertModelRoutingPlanCompatible(definition, savedPlan)
+    return { routingPlan: savedPlan }
   }
   return await prepareExecutableExtensionRouting(
     definition,
     workspace,
     ctx,
-    persisted?.modelRoutingPlan,
+    savedPlan,
   )
 }
 

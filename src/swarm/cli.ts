@@ -11,6 +11,7 @@ import {
   type ModelRoutingPlan,
   normalizeModelRoutingCatalogError,
   renderModelRoutingPlan,
+  selectPersistedModelRoutingPlan,
 } from './swarm/model-routing'
 import { PipelineController } from './swarm/pipeline'
 import {
@@ -176,12 +177,13 @@ try {
     const persisted = isRestartCommand
       ? await loadPersistedModelRoutingPlan(workspace, swarmDefinition)
       : undefined
-    if (persisted?.loadedExistingState) {
-      assertModelRoutingPlanCompatible(
-        swarmDefinition,
-        persisted.modelRoutingPlan,
-      )
-      routingPlan = persisted.modelRoutingPlan
+    routingPlan = selectPersistedModelRoutingPlan(
+      swarmDefinition,
+      persisted?.modelRoutingPlan,
+      persisted?.loadedExistingState ?? false,
+    )
+    if (persisted?.alreadyCompleted) {
+      assertModelRoutingPlanCompatible(swarmDefinition, routingPlan)
     }
     if (!persisted?.alreadyCompleted) {
       let refreshedAt: number

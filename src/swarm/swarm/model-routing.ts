@@ -347,6 +347,31 @@ export function assertModelRoutingPlanCompatible(
   }
 }
 
+function isModelRoutingPlanCompatible(
+  definition: SwarmDefinition,
+  plan: ModelRoutingPlan | undefined,
+): plan is ModelRoutingPlan {
+  if (plan === undefined || !hasSupportedRoutingVersion(plan)) return false
+  const rootPolicy = definition.modelRouting
+  return (
+    rootPolicy !== undefined &&
+    JSON.stringify(plan.rootPolicy) === JSON.stringify(rootPolicy) &&
+    collectPlanCompatibilityErrors(definition, plan, rootPolicy).length === 0
+  )
+}
+
+export function selectPersistedModelRoutingPlan(
+  definition: SwarmDefinition,
+  plan: ModelRoutingPlan | undefined,
+  stateExists: boolean,
+): ModelRoutingPlan | undefined {
+  if (!stateExists) return undefined
+  if (plan === undefined || !hasSupportedRoutingVersion(plan)) {
+    assertModelRoutingPlanCompatible(definition, plan)
+  }
+  return isModelRoutingPlanCompatible(definition, plan) ? plan : undefined
+}
+
 function collectPlanCompatibilityErrors(
   definition: SwarmDefinition,
   plan: ModelRoutingPlan,
@@ -354,28 +379,123 @@ function collectPlanCompatibilityErrors(
 ): string[] {
   const expected = collectAgentIntents(definition, 'root', rootPolicy)
   const actual = new Map(plan.nodes.map((node) => [node.path, node]))
-  const errors =
-    actual.size === plan.nodes.length ? [] : ['duplicate agent paths']
-  for (const [path, intent] of expected) {
+  const errors: string[] = []
+  if (actual.size !== plan.nodes.length) errors.push('duplicate agent paths')
+  for (const [path, intent] of expected.agents) {
     const node = actual.get(path)
-    if (node === undefined) {
-      errors.push(`missing agent '${path}'`)
-      continue
-    }
-    const parsed = parseBuiltInAlias(node.selectedAlias)
-    if (
-      parsed.error !== undefined ||
-      !intent.policy.allowedAliases.includes(parsed.baseAlias)
-    ) {
-      errors.push(`selected alias for '${path}' is no longer allowed`)
-    }
-    if (node.profile !== intent.profile) {
-      errors.push(`workload profile for '${path}' changed`)
-    }
-    actual.delete(path)
+    errors.push(...collectAgentPlanCompatibilityErrors(path, node, intent))
+    if (node !== undefined) actual.delete(path)
   }
-  for (const path of actual.keys()) errors.push(`unexpected agent '${path}'`)
+  errors.push(...[...actual.keys()].map((path) => `unexpected agent '${path}'`))
+  for (const [path, policy] of expected.policies) {
+    errors.push(...collectSubtreePolicyErrors(path, policy, plan))
+  }
   return errors
+}
+
+function collectAgentPlanCompatibilityErrors(
+  path: string,
+  node: ModelRoutingNodePlan | undefined,
+  expected: AgentRoutingCompatibilityIntent,
+): string[] {
+  if (node === undefined) return [`missing agent '${path}'`]
+  return [
+    ...collectAliasCompatibilityErrors(path, node, expected),
+    ...collectIntentCompatibilityErrors(path, node, expected),
+    ...collectZeroCostCompatibilityErrors(path, node, expected.policy),
+  ]
+}
+
+function collectAliasCompatibilityErrors(
+  path: string,
+  node: ModelRoutingNodePlan,
+  expected: AgentRoutingCompatibilityIntent,
+): string[] {
+  const parsed = parseBuiltInAlias(node.selectedAlias)
+  const allowed =
+    parsed.error === undefined &&
+    expected.policy.allowedAliases.includes(parsed.baseAlias)
+  return [
+    ...(allowed ? [] : [`selected alias for '${path}' is no longer allowed`]),
+    ...(expected.intent.candidateAliases.includes(node.selectedAlias)
+      ? []
+      : [`model selector for '${path}' changed`]),
+  ]
+}
+
+function collectIntentCompatibilityErrors(
+  path: string,
+  node: ModelRoutingNodePlan,
+  expected: AgentRoutingCompatibilityIntent,
+): string[] {
+  const comparisons: [unknown, unknown, string][] = [
+    [node.profile, expected.intent.profile, 'workload profile'],
+    [node.source, expected.intent.source, 'model source'],
+    [node.qualityFloor, expected.intent.qualityFloor, 'quality floor'],
+    [
+      node.requiredCapabilities,
+      expected.intent.requirements.capabilities,
+      'required capabilities',
+    ],
+    [node.usage, expected.intent.usage, 'usage estimate'],
+    [node.exposure.iterations, expected.exposure.iterations, 'DAG iterations'],
+    [
+      node.exposure.repeatRounds,
+      expected.exposure.repeatRounds,
+      'DAG repeat exposure',
+    ],
+    [
+      node.exposure.nodeAttempts,
+      expected.exposure.nodeAttempts,
+      'DAG restart exposure',
+    ],
+  ]
+  return comparisons
+    .filter(
+      ([actual, expectedValue]) =>
+        JSON.stringify(actual) !== JSON.stringify(expectedValue),
+    )
+    .map((comparison) => `${comparison[2]} for '${path}' changed`)
+}
+
+function collectZeroCostCompatibilityErrors(
+  path: string,
+  node: ModelRoutingNodePlan,
+  policy: SwarmModelRoutingPolicy,
+): string[] {
+  if (
+    policy.allowZeroMarginalCost ||
+    !usesZeroMarginalCostForPositiveUsage(node)
+  ) {
+    return []
+  }
+  return [`zero marginal cost for '${path}' is no longer allowed`]
+}
+
+function collectSubtreePolicyErrors(
+  path: string,
+  policy: SwarmModelRoutingPolicy,
+  plan: ModelRoutingPlan,
+): string[] {
+  const subtreeCost = plan.subtreeEstimatedCostUsd[path]
+  if (subtreeCost === undefined) {
+    return [`missing subtree estimate for '${path}'`]
+  }
+  if (subtreeCost > policy.maxEstimatedCostUsd) {
+    return [`subtree estimate for '${path}' exceeds the current cap`]
+  }
+  return []
+}
+
+function usesZeroMarginalCostForPositiveUsage(
+  node: ModelRoutingNodePlan,
+): boolean {
+  return (
+    (node.usage.inputTokens > 0 && node.catalogRates.input === 0) ||
+    (node.usage.outputTokens > 0 && node.catalogRates.output === 0) ||
+    (node.usage.cacheReadTokens > 0 && node.catalogRates.cacheRead === 0) ||
+    (node.usage.cacheWriteTokens > 0 && node.catalogRates.cacheWrite === 0)
+  )
 }
 
 export function sliceModelRoutingPlan(
@@ -743,6 +863,17 @@ interface AgentRoutingIntent {
   candidateAliases: string[]
 }
 
+interface AgentRoutingCompatibilityIntent {
+  exposure: Omit<ModelRoutingNodePlan['exposure'], 'providerAttempts'>
+  intent: AgentRoutingIntent
+  policy: SwarmModelRoutingPolicy
+}
+
+interface ModelRoutingCompatibilityIntents {
+  agents: Map<string, AgentRoutingCompatibilityIntent>
+  policies: Map<string, SwarmModelRoutingPolicy>
+}
+
 function planAgent(
   options: PlanAgentOptions,
 ): ModelRoutingNodePlan | undefined {
@@ -1052,32 +1183,80 @@ function collectAgentIntents(
   definition: SwarmDefinition,
   path: string,
   inheritedPolicy: SwarmModelRoutingPolicy,
-): Map<
-  string,
-  { profile: SwarmWorkloadProfile; policy: SwarmModelRoutingPolicy }
-> {
-  const result = new Map<
-    string,
-    { profile: SwarmWorkloadProfile; policy: SwarmModelRoutingPolicy }
-  >()
+): ModelRoutingCompatibilityIntents {
+  const collected: ModelRoutingCompatibilityIntents = {
+    agents: new Map(),
+    policies: new Map(),
+  }
+  collectAgentIntentsInto(
+    definition,
+    path,
+    inheritedPolicy,
+    {
+      iterations: definition.targetCount,
+      repeatRounds: 1,
+      nodeAttempts: 1,
+    },
+    collected,
+  )
+  return collected
+}
+
+function collectAgentIntentsInto(
+  definition: SwarmDefinition,
+  path: string,
+  inheritedPolicy: SwarmModelRoutingPolicy,
+  context: RoutingContext,
+  collected: ModelRoutingCompatibilityIntents,
+): void {
   const policy = definition.modelRouting ?? inheritedPolicy
+  collected.policies.set(path, policy)
+  const invalidatableNodes = collectInvalidatableNodes(definition)
   for (const [name, agent] of definition.agents) {
-    result.set(`${path}/${name}`, {
-      profile: agent.workload?.profile ?? 'general',
+    const invalidationAttempts = getNodeInvalidationAttempts(
+      definition,
+      invalidatableNodes,
+      name,
+    )
+    collected.agents.set(`${path}/${name}`, {
+      exposure: {
+        iterations: context.iterations,
+        repeatRounds: context.repeatRounds,
+        nodeAttempts: context.nodeAttempts * invalidationAttempts,
+      },
+      intent: buildAgentRoutingIntent(agent, definition, policy),
       policy,
     })
   }
   for (const [name, graph] of definition.graphs) {
     if (graph.definition === undefined) continue
-    for (const [agentPath, intent] of collectAgentIntents(
+    const graphInvalidationAttempts = getNodeInvalidationAttempts(
+      definition,
+      invalidatableNodes,
+      name,
+    )
+    collectAgentIntentsInto(
       graph.definition,
       `${path}/${name}`,
       policy,
-    )) {
-      result.set(agentPath, intent)
-    }
+      {
+        iterations: context.iterations * graph.definition.targetCount,
+        repeatRounds: context.repeatRounds * (graph.repeat?.maxRounds ?? 1),
+        nodeAttempts: context.nodeAttempts * graphInvalidationAttempts,
+      },
+      collected,
+    )
   }
-  return result
+}
+
+function getNodeInvalidationAttempts(
+  definition: SwarmDefinition,
+  invalidatableNodes: ReadonlySet<string>,
+  name: string,
+): number {
+  return invalidatableNodes.has(name)
+    ? (definition.restartPolicy?.maxNodeAttempts ?? 1)
+    : 1
 }
 
 function formatCost(value: number): string {

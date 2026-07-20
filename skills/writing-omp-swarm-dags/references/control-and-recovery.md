@@ -104,9 +104,28 @@ Use:
 omp-swarm restart path/to/swarm.yaml
 ```
 
-Restart resumes prior state only when the root and imported YAML definitions are unchanged. It reuses eligible settled nodes and reruns unfinished or invalidated work. It does not verify that settled-node artifacts or source files still exist and does not restore the working tree.
+Restart verifies the saved definition summary against its fingerprint, then
+plans against the current validated DAG. A current node is reusable when the
+saved node has the same name and type and completed the resumed iteration.
+Task, command, model, and other definition changes do not invalidate that
+completed work. Every non-reusable node and its transitive dependents in the
+current graph rerun; unrelated reusable branches remain settled. Added nodes
+run, removed nodes disappear from current state, and a node whose type changed
+reruns under its new type. The persisted node maps are rewritten to the current
+DAG before execution so stale or cross-type entries cannot corrupt progress.
 
-For a routed DAG, restart also requires the persisted versioned routing plan. It reuses the original selected aliases, planned concrete models, costs, and assumptions rather than reranking against the current catalog. OMP may resolve the persisted alias to a different concrete fallback during execution; state `resolvedModel` records that runtime model without changing the planned audit record. Legacy state without a routing plan cannot be resumed as routed; start a fresh normal run.
+This is an orchestration-state guarantee, not an artifact guarantee. Restart
+does not verify that artifacts or source edits from reused nodes still exist,
+does not rerun a settled node merely because its task changed, and does not
+restore the working tree. Start a fresh normal run when changed settled work
+must execute again.
+
+For a routed DAG, restart still requires a persisted versioned routing plan.
+When that plan remains compatible with the current DAG, restart reuses it.
+When the relaxed DAG changes make it incompatible, restart plans the current
+DAG from the refreshed catalog while preserving the execution metadata of
+settled agents. Legacy routed state without a routing plan cannot be resumed;
+start a fresh normal run.
 
 Do not clean the DAG's current run directory before restart. Preserve the handoffs, reports, signals, and project edits required by reused nodes. A fresh normal run may clean only the DAG-owned run directory according to `artifact-lifecycle.md`.
 

@@ -191,7 +191,7 @@ export class PipelineController {
         options.agentConcurrencyLimiter ?? this.#agentConcurrencyLimiter,
     }
 
-    await this.#syncAgentModelMetadata()
+    await this.#syncAgentModelMetadata(options.resume?.settledNodes ?? [])
 
     await this.#stateTracker.appendOrchestratorLog(
       `Pipeline '${this.#swarmDefinition.name}' starting: mode=${this.#swarmDefinition.mode} iterations=${targetCount} waves=${this.#waves.length} nodes=${this.#swarmDefinition.nodes.size} agents=${this.#swarmDefinition.agents.size} bash=${this.#swarmDefinition.bashNodes.size} graphs=${this.#swarmDefinition.graphs.size} concurrency=${this.#swarmDefinition.concurrency}`,
@@ -223,8 +223,12 @@ export class PipelineController {
     }
   }
 
-  async #syncAgentModelMetadata(): Promise<void> {
+  async #syncAgentModelMetadata(
+    settledNodes: readonly string[],
+  ): Promise<void> {
+    const settled = new Set(settledNodes)
     for (const [name, agent] of this.#swarmDefinition.agents) {
+      if (settled.has(name)) continue
       const model =
         this.#modelRoutingPlan === undefined
           ? (agent.model ?? this.#swarmDefinition.model)
