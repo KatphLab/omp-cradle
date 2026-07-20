@@ -30,12 +30,25 @@ Use the literal `swarm.name` in the DAG-owned path. Runtime `.swarm_<name>/` and
 ## File Contracts
 
 - Give every mutable DAG-owned or project path one writer at a time.
+- Name the writer in each phase and the dependency boundary for every ownership transfer.
 - Same-wave nodes use disjoint files and disjoint project edit scopes.
 - Consumers read exact paths or a declared ownership manifest.
 - A file is a handoff only when the producing task defines its format and the consumer handles missing or invalid content.
 - Status and graph-repeat files use exact one-line values.
 - Control decisions use the YAML grammar in `control-and-recovery.md`.
 - Use atomic temporary-file-and-rename writes when a retry could expose a partial file.
+
+### Report Status Lifecycle
+
+Define READY/BLOCKED against the producing node's objective, not the eventual
+product. Name every consumer that hard-gates on the status, whether the report
+remains current after ownership transfer, and the node allowed to replace it
+during correction.
+
+After transfer, an upstream report is either immutable historical evidence
+superseded by a downstream current report, or its writer must be reachable from
+the correction target. Never make terminal acceptance depend on changing a
+frozen report whose writer is outside the invalidated suffix.
 
 Agents may inspect bounded project areas for source discovery. They must not indiscriminately scan `.swarm_*`, other DAG roots, cache, or history.
 

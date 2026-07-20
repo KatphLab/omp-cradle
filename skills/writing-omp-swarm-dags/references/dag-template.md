@@ -47,6 +47,9 @@ swarm:
         the observable behavior, exact source/config/test paths the implementer
         may edit, paths it must not edit, existing conventions to reuse, and the
         focused verification command.
+        Missing target source or incomplete implementation is recorded in a
+        complete plan and does not block investigation. Block only when the
+        request or required authority is missing, malformed, or contradictory.
       waits_for: [prepare]
       reports_to: [implement]
 
@@ -88,14 +91,21 @@ swarm:
 
         If the source and checks pass, write
         .omp-swarm/source-change/run/signals/review.control.yaml with action:
-        continue and a reason. If a correctable defect remains, write action:
-        restart, target: implement, and a concrete reason. If safe completion is
-        impossible, write action: fail and a concrete reason.
+        continue and a reason. If a defect remains that `implement` is authorized
+        to correct within its declared project and handoff paths, write action:
+        restart, target: implement, and a concrete reason. Otherwise write action:
+        fail with the unreachable correction owner or impossible prerequisite.
       waits_for: [check]
       control:
         signal: .omp-swarm/source-change/run/signals/review.control.yaml
         allowed_restart_targets: [implement]
 ```
+
+Before adapting this topology, enumerate every possible review rejection reason
+and compute the `implement -> check -> review` invalidated suffix. `implement`
+must own every required correction; the reviewer alone owns its report and
+signal. Missing implementation discovered by `investigate` must still permit a
+complete plan.
 
 The terminal accepted state is the modified project tree plus review evidence. There is no publisher node because ordinary source files are edited and verified in place.
 

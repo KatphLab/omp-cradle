@@ -2,8 +2,14 @@ import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { buildDependencyGraph, collectTransitiveDependents } from './dag'
+import {
+  findModelRoutingNode,
+  type ModelRoutingPlan,
+  sliceModelRoutingPlan,
+} from './model-routing'
 import type {
   SwarmAgent,
+  SwarmAgentWorkload,
   SwarmBashNode,
   SwarmDefinition,
   SwarmGraphNode,
@@ -92,6 +98,7 @@ interface SwarmDefinitionStateSummary {
   targetCount: number
   concurrency: number
   model?: string
+  modelRouting?: SwarmDefinition['modelRouting']
   restartPolicy?: {
     maxRestarts: number
     maxRestartsPerTarget: number
@@ -113,6 +120,7 @@ interface SwarmDefinitionAgentNodeSummary extends SwarmDefinitionNodeSummaryBase
   role: string
   task: string
   model?: string
+  workload?: SwarmAgentWorkload
   tools?: string[]
 }
 
@@ -143,6 +151,7 @@ export interface SwarmState {
   targetCount: number
   definitionFingerprint: string
   definitionSummary: SwarmDefinitionStateSummary
+  modelRoutingPlan?: ModelRoutingPlan
   agents: Record<string, AgentState>
   bashNodes: Record<string, BashNodeState>
   graphs: Record<string, GraphState>
@@ -216,7 +225,11 @@ export class StateTracker {
     return structuredClone(this.#state)
   }
 
-  async init(definition: SwarmDefinition): Promise<void> {
+  async init(
+    definition: SwarmDefinition,
+    modelRoutingPlan?: ModelRoutingPlan,
+    graphPath = 'root',
+  ): Promise<void> {
     await fs.mkdir(path.join(this.#swarmDir, 'state'), { recursive: true })
     await fs.mkdir(path.join(this.#swarmDir, 'logs'), { recursive: true })
     await fs.mkdir(path.join(this.#swarmDir, 'context'), { recursive: true })
@@ -238,14 +251,28 @@ export class StateTracker {
     this.#state.restartCount = 0
     this.#state.restartTargetCounts = {}
     this.#state.restartHistory = []
+    if (modelRoutingPlan === undefined) {
+      delete this.#state.modelRoutingPlan
+    } else {
+      this.#state.modelRoutingPlan = sliceModelRoutingPlan(
+        modelRoutingPlan,
+        graphPath,
+      )
+    }
 
     for (const name of definition.agents.keys()) {
+      const plannedModel =
+        modelRoutingPlan === undefined
+          ? undefined
+          : findModelRoutingNode(modelRoutingPlan, `${graphPath}/${name}`)
+              .selectedAlias
       this.#state.agents[name] = {
         name,
         status: 'pending',
         iteration: 0,
         wave: 0,
         attempt: 1,
+        ...(plannedModel === undefined ? {} : { model: plannedModel }),
       }
     }
 
@@ -470,7 +497,10 @@ function createPendingAgentState(
   previous: AgentState | undefined,
   iteration: number,
 ): AgentState {
-  return createPendingNodeState(name, previous, iteration, 0, 'pending')
+  return {
+    ...createPendingNodeState(name, previous, iteration, 0, 'pending'),
+    ...(previous?.model === undefined ? {} : { model: previous.model }),
+  }
 }
 
 function createPendingBashNodeState(
@@ -531,6 +561,7 @@ function markAgentStale(agent: AgentState, iteration: number): AgentState {
     attempt: shouldIncrementAttempt(agent.status)
       ? agent.attempt + 1
       : agent.attempt,
+    ...(agent.model === undefined ? {} : { model: agent.model }),
     ...(agent.lastControlDecision === undefined
       ? {}
       : { lastControlDecision: agent.lastControlDecision }),
@@ -589,6 +620,9 @@ function normalizePersistedState(parsed: PersistedSwarmState): SwarmState {
     restartCount: parsed.restartCount ?? 0,
     restartTargetCounts: parsed.restartTargetCounts ?? {},
     restartHistory: parsed.restartHistory ?? [],
+    ...(parsed.modelRoutingPlan === undefined
+      ? {}
+      : { modelRoutingPlan: parsed.modelRoutingPlan }),
   }
 }
 
@@ -614,16 +648,48 @@ export interface RestartResumePlan {
   message: string
 }
 
+export async function loadPersistedModelRoutingPlan(
+  workspace: string,
+  definition: SwarmDefinition,
+): Promise<{
+  loadedExistingState: boolean
+  alreadyCompleted: boolean
+  modelRoutingPlan?: ModelRoutingPlan
+}> {
+  const stateTracker = new StateTracker(workspace, definition.name)
+  const loadedState = await stateTracker.load()
+  if (loadedState === undefined)
+    return { loadedExistingState: false, alreadyCompleted: false }
+  if (
+    definition.modelRouting !== undefined &&
+    loadedState.modelRoutingPlan === undefined
+  ) {
+    return {
+      loadedExistingState: true,
+      alreadyCompleted: loadedState.status === 'completed',
+    }
+  }
+  assertRestartFingerprintMatches(stateTracker, loadedState, definition)
+  return {
+    loadedExistingState: true,
+    alreadyCompleted: loadedState.status === 'completed',
+    ...(loadedState.modelRoutingPlan === undefined
+      ? {}
+      : { modelRoutingPlan: loadedState.modelRoutingPlan }),
+  }
+}
+
 export async function createRestartStateTracker(
   workspace: string,
   definition: SwarmDefinition,
+  modelRoutingPlan?: ModelRoutingPlan,
 ): Promise<RestartResumePlan> {
   const stateTracker = new StateTracker(workspace, definition.name)
   const loadedState = await stateTracker.load()
   const nodeNames = [...definition.nodes.keys()].toSorted(compareStrings)
 
   if (loadedState === undefined) {
-    await stateTracker.init(definition)
+    await stateTracker.init(definition, modelRoutingPlan)
     return createNoStateRestartPlan(stateTracker, nodeNames)
   }
 
@@ -783,9 +849,11 @@ function planRestartNodes(
 export async function createInitializedStateTracker(
   workspace: string,
   definition: SwarmDefinition,
+  modelRoutingPlan?: ModelRoutingPlan,
+  graphPath = 'root',
 ): Promise<StateTracker> {
   const stateTracker = new StateTracker(workspace, definition.name)
-  await stateTracker.init(definition)
+  await stateTracker.init(definition, modelRoutingPlan, graphPath)
   return stateTracker
 }
 
@@ -826,6 +894,9 @@ function buildDefinitionStateSummary(
     targetCount: definition.targetCount,
     concurrency: definition.concurrency,
     ...(definition.model === undefined ? {} : { model: definition.model }),
+    ...(definition.modelRouting === undefined
+      ? {}
+      : { modelRouting: definition.modelRouting }),
     ...(definition.restartPolicy === undefined
       ? {}
       : { restartPolicy: definition.restartPolicy }),
@@ -885,6 +956,7 @@ function buildAgentNodeSummary(
     role: node.role,
     task: node.task,
     ...(node.model === undefined ? {} : { model: node.model }),
+    ...(node.workload === undefined ? {} : { workload: node.workload }),
     ...(node.tools === undefined
       ? {}
       : { tools: [...node.tools].toSorted(compareStrings) }),
@@ -970,6 +1042,7 @@ function diffDefinitionSummaries(
     'targetCount',
     'concurrency',
     'model',
+    'modelRouting',
     'restartPolicy',
   ])
   appendNodeDiffs(lines, '', prior.nodes, current.nodes)
@@ -1066,6 +1139,7 @@ function appendAgentNodeDiff(
   appendScalarDiffs(lines, `node '${nodePath}'`, prior, current, [
     'role',
     'model',
+    'workload',
     'tools',
   ])
   if (prior.task !== current.task) lines.push(`node '${nodePath}' task changed`)
@@ -1109,6 +1183,7 @@ function appendGraphNodeDiff(
         'targetCount',
         'concurrency',
         'model',
+        'modelRouting',
         'restartPolicy',
       ],
     )

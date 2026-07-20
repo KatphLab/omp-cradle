@@ -2,10 +2,17 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from '@oh-my-pi/pi-coding-agent'
+import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { formatDuration } from './swarm/format'
 import { loadSwarmDefinitionFile } from './swarm/loader'
+import {
+  assertModelRoutingPlanCompatible,
+  buildModelRoutingPlan,
+  type ModelRoutingPlan,
+  normalizeModelRoutingCatalogError,
+} from './swarm/model-routing'
 import type { PipelineResult } from './swarm/pipeline'
 import { PipelineController } from './swarm/pipeline'
 import {
@@ -18,6 +25,7 @@ import type { AgentState, BashNodeState, GraphState } from './swarm/state'
 import {
   createInitializedStateTracker,
   createRestartStateTracker,
+  loadPersistedModelRoutingPlan,
   StateTracker,
 } from './swarm/state'
 
@@ -95,18 +103,75 @@ interface SwarmRunContext {
   workspace: string
 }
 
+type ExtensionPreparation =
+  | {
+      ok: true
+      routingPlan?: ModelRoutingPlan
+      settings?: Settings
+    }
+  | { ok: false }
+
+async function prepareExtensionWorkspace(
+  definition: SwarmDefinition,
+  workspace: string,
+  ctx: ExtensionCommandContext,
+  restart: boolean,
+): Promise<ExtensionPreparation> {
+  try {
+    const routing = await prepareExtensionRoutingPlan(
+      definition,
+      workspace,
+      ctx,
+      restart,
+    )
+    await fs.mkdir(workspace, { recursive: true })
+    return {
+      ok: true,
+      ...routing,
+    }
+  } catch (error_) {
+    const error = error_ instanceof Error ? error_ : new Error(String(error_))
+    ctx.ui.notify(error.message, 'error')
+    return { ok: false }
+  }
+}
+
+async function loadPreparedSwarmContext(
+  yamlPath: string,
+  ctx: ExtensionCommandContext,
+  restart: boolean,
+): Promise<
+  | (SwarmRunContext & {
+      routingPlan?: ModelRoutingPlan
+      settings?: Settings
+    })
+  | undefined
+> {
+  const swarmContext = await loadSwarmRunContext(yamlPath, ctx)
+  if (swarmContext === undefined) return undefined
+  const preparation = await prepareExtensionWorkspace(
+    swarmContext.swarmDefinition,
+    swarmContext.workspace,
+    ctx,
+    restart,
+  )
+  if (!preparation.ok) return undefined
+  return { ...swarmContext, ...preparation }
+}
+
 async function handleRun(
   yamlPath: string,
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
-  const swarmContext = await loadSwarmRunContext(yamlPath, ctx)
+  const swarmContext = await loadPreparedSwarmContext(yamlPath, ctx, false)
   if (swarmContext === undefined) return
-  const { swarmDefinition, waves, workspace } = swarmContext
-
+  const { swarmDefinition, waves, workspace, routingPlan, settings } =
+    swarmContext
   const stateTracker = await createInitializedStateTracker(
     workspace,
     swarmDefinition,
+    routingPlan,
   )
 
   await runSwarmWithState(
@@ -116,6 +181,12 @@ async function handleRun(
     stateTracker,
     ctx,
     pi,
+    routingPlan === undefined
+      ? {}
+      : {
+          modelRoutingPlan: routingPlan,
+          ...(settings === undefined ? {} : { settings }),
+        },
   )
 }
 
@@ -124,13 +195,18 @@ async function handleRestart(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
-  const swarmContext = await loadSwarmRunContext(yamlPath, ctx)
+  const swarmContext = await loadPreparedSwarmContext(yamlPath, ctx, true)
   if (swarmContext === undefined) return
-  const { swarmDefinition, waves, workspace } = swarmContext
+  const { swarmDefinition, waves, workspace, routingPlan, settings } =
+    swarmContext
 
   let restartPlan
   try {
-    restartPlan = await createRestartStateTracker(workspace, swarmDefinition)
+    restartPlan = await createRestartStateTracker(
+      workspace,
+      swarmDefinition,
+      routingPlan,
+    )
   } catch (error_) {
     const error = error_ instanceof Error ? error_ : new Error(String(error_))
     ctx.ui.notify(error.message, 'error')
@@ -153,8 +229,12 @@ async function handleRestart(
     ctx,
     pi,
     {
-      startIteration: restartPlan.startIteration,
-      settledNodes: restartPlan.settledNodes,
+      ...(routingPlan === undefined ? {} : { modelRoutingPlan: routingPlan }),
+      ...(settings === undefined ? {} : { settings }),
+      resume: {
+        startIteration: restartPlan.startIteration,
+        settledNodes: restartPlan.settledNodes,
+      },
     },
   )
 }
@@ -175,8 +255,62 @@ async function loadSwarmRunContext(
   const workspace = path.isAbsolute(swarmDefinition.workspace)
     ? swarmDefinition.workspace
     : path.resolve(path.dirname(resolvedPath), swarmDefinition.workspace)
-  await fs.mkdir(workspace, { recursive: true })
   return { swarmDefinition, waves, workspace }
+}
+
+interface PreparedExtensionRouting {
+  routingPlan: ModelRoutingPlan
+  settings?: Settings
+}
+
+async function prepareExtensionRoutingPlan(
+  definition: SwarmDefinition,
+  workspace: string,
+  ctx: ExtensionCommandContext,
+  restart: boolean,
+): Promise<PreparedExtensionRouting | undefined> {
+  if (definition.modelRouting === undefined) return undefined
+  const persisted = restart
+    ? await loadPersistedModelRoutingPlan(workspace, definition)
+    : undefined
+  if (persisted?.loadedExistingState) {
+    assertModelRoutingPlanCompatible(definition, persisted.modelRoutingPlan)
+  }
+  if (persisted?.alreadyCompleted) {
+    if (persisted.modelRoutingPlan === undefined) {
+      throw new Error('Completed routed state has no model routing plan.')
+    }
+    return { routingPlan: persisted.modelRoutingPlan }
+  }
+  return await prepareExecutableExtensionRouting(
+    definition,
+    workspace,
+    ctx,
+    persisted?.modelRoutingPlan,
+  )
+}
+
+async function prepareExecutableExtensionRouting(
+  definition: SwarmDefinition,
+  workspace: string,
+  ctx: ExtensionCommandContext,
+  persistedPlan: ModelRoutingPlan | undefined,
+): Promise<PreparedExtensionRouting> {
+  const settings = await Settings.loadReadOnly({ cwd: workspace })
+  try {
+    await ctx.modelRegistry.refresh('online-if-uncached')
+  } catch (error_) {
+    throw normalizeModelRoutingCatalogError(error_)
+  }
+  const routingPlan =
+    persistedPlan ??
+    (await buildModelRoutingPlan({
+      definition,
+      modelRegistry: ctx.modelRegistry,
+      settings,
+      refreshedAt: Date.now(),
+    }))
+  return { routingPlan, settings }
 }
 
 async function runSwarmWithState(
@@ -186,7 +320,11 @@ async function runSwarmWithState(
   stateTracker: StateTracker,
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
-  resume?: { startIteration: number; settledNodes: readonly string[] },
+  execution?: {
+    modelRoutingPlan?: ModelRoutingPlan
+    resume?: { startIteration: number; settledNodes: readonly string[] }
+    settings?: Settings
+  },
 ): Promise<void> {
   logStart(pi, swarmDefinition, waves, workspace)
   ctx.ui.notify(
@@ -204,15 +342,16 @@ async function runSwarmWithState(
     swarmDefinition,
     waves,
     stateTracker,
+    execution?.modelRoutingPlan,
   )
   const result = await controller.run({
     workspace,
     onProgress: () => {
       updateWidget()
     },
-    ...(resume === undefined ? {} : { resume }),
+    ...(execution?.resume === undefined ? {} : { resume: execution.resume }),
     modelRegistry: ctx.modelRegistry,
-    settings: pi.pi.settings,
+    settings: execution?.settings ?? pi.pi.settings,
   })
 
   ctx.ui.setWidget(widgetKey, undefined)

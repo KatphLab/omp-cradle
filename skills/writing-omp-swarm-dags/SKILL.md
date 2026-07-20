@@ -1,6 +1,6 @@
 ---
 name: writing-omp-swarm-dags
-description: Use when authoring a new OMP swarm YAML DAG for work in an existing project, including source changes, project checks, multi-agent collaboration, Bash verification, imported graphs, iterations, control rewinds, or restart/resume.
+description: Use when authoring OMP swarm YAML DAGs for existing projects, especially source changes, project checks, imports, iterations, ownership transfers, control rewinds, restart loops, or resume behavior.
 ---
 
 # Writing OMP Swarm DAGs
@@ -9,39 +9,69 @@ description: Use when authoring a new OMP swarm YAML DAG for work in an existing
 
 The existing project is the work surface and the deliverable. Point `swarm.workspace` at the project root or an isolated project worktree; use DAG-owned files only for orchestration state and evidence.
 
-## Whole-File Routing
+## Route Before Reading
 
-A route selects whole files only. Read each selected file from beginning to end.
+Read the first row for every DAG, then only rows whose trigger is true. Read selected files completely and record the named decisions.
 
-| Condition                                                            | Read                                                                                                              |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Every new DAG                                                        | [Project Workflows](references/project-workflows.md) and [Root and Scheduling](references/root-and-scheduling.md) |
-| DAG contains an `agent` node                                         | [Agent Nodes](references/agent-nodes.md)                                                                          |
-| DAG contains a `bash` node                                           | [Bash Nodes](references/bash-nodes.md)                                                                            |
-| DAG contains an imported or repeated `graph` node                    | [Graph Nodes](references/graph-nodes.md)                                                                          |
-| DAG uses `control`, `restart_policy`, rewind, restart, or resume     | [Control and Recovery](references/control-and-recovery.md)                                                        |
-| DAG creates handoffs, reports, signals, cleanup, cache, or history   | [Artifact Lifecycle](references/artifact-lifecycle.md)                                                            |
-| A complete source-change composition would help                      | [DAG Template](references/dag-template.md)                                                                        |
-| A specification-driven review and remediation composition would help | [Specification Review and Remediation Template](references/spec-review-remediation-template.md)                   |
+| Trigger                                             | Read                                                                                                              | Decide                                                                                                        |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Every DAG                                           | [Project Workflows](references/project-workflows.md) and [Root and Scheduling](references/root-and-scheduling.md) | Workspace and anchors; project/DAG paths; mode, edges, waves, concurrency, validation.                        |
+| An agent inspects, decides, reviews, or edits       | [Agent Nodes](references/agent-nodes.md)                                                                          | Task, tools, ownership, reports/control, retry, failure.                                                      |
+| A project command runs                              | [Bash Nodes](references/bash-nodes.md)                                                                            | Command, cwd, mutable output, exit marker, evidence, interpreting agent.                                      |
+| `model_routing` or agent `workload` is used         | [Model Routing](references/model-routing.md)                                                                      | Alias-only selectors, profiles/usage, policy narrowing, planning, pricing uncertainty, and restart stability. |
+| A graph is imported, inlined, or repeated           | [Graph Nodes](references/graph-nodes.md)                                                                          | Child workspace/ownership, repeat semantics, parent edges, validation.                                        |
+| The workflow rewinds, restarts, or resumes          | [Control and Recovery](references/control-and-recovery.md)                                                        | Controller, restart targets/limits, rerun boundary, preserved state.                                          |
+| Artifacts are created, cleaned, retained, or reused | [Artifact Lifecycle](references/artifact-lifecycle.md)                                                            | Layout, writers, cleanup, restart preservation, retention/reuse.                                              |
 
-Do not read a node-type or optional-feature file unless the new DAG uses that feature.
+Choose the authoring mode before templates:
 
-## Authoring Order
+- Deliverable is a DAG that will later design and audit another DAG: prepare the [Complex DAG Authoring Template](templates/author-complex-dag.yaml); skip composition templates.
+- Otherwise author directly, adapting at most one matching topology:
+  - Bounded implementation → checks → review/correction: [DAG Template](references/dag-template.md).
+  - Normative sources → precedence → dependency-ordered remediation → audits/correction: [Specification Review and Remediation Template](references/spec-review-remediation-template.md).
+- No match: build directly from routed references.
 
-1. Define the project outcome, existing project root, acceptance commands, and source/config/test areas that may change.
-2. Select and fully read the routed files above.
-3. Draw the smallest graph that gives every mutable project path one writer at a time.
-4. Make implementation agents edit the actual project tree. Put only coordination data under the DAG-owned run directory.
-5. Add focused project checks and a downstream agent decision wherever a Bash failure must affect the workflow.
-6. Make retries and rewinds idempotent: scheduler restart does not roll back project files.
-7. Validate the root YAML and all imports:
+Templates are starting artifacts, not schema documentation.
+
+## Build
+
+1. Define the outcome, project root and anchors, exact commands, and mutable, forbidden, and inspect-only paths.
+2. Read routed references; record their decisions. Missing workspace, ownership, command, or recovery decisions block authoring.
+3. Draw the smallest graph with one writer per mutable path. Agents edit project files; DAG paths hold coordination and evidence.
+4. Prove bootstrap and correction reachability before validation. For every hard
+   status gate and possible restart reason, record the required mutation, its
+   phase-current owner, the allowed restart target, and an authorized writer in
+   that target's invalidated suffix. Missing target implementation is a completed
+   analysis finding, not a blocker to planning its implementation. Reject any
+   restart-worthy predicate without a reachable owner.
+5. Interpret meaningful Bash results with a downstream agent. Make every retry idempotent; rewind does not restore files.
+6. Validate the root and imports, fix every diagnostic, and confirm printed waves:
 
 ```bash
 omp-swarm validate path/to/swarm.yaml
 ```
 
-Fix every diagnostic and inspect the printed waves. A DAG is ready only when the command ends with `Validation: ok`.
+Ready means the command ends with `Validation: ok`.
+
+## Prepare the Complex Author
+
+Select this mode only when the requested deliverable is the authoring DAG itself. To write a project workflow now, use direct authoring instead. **Never execute the authoring DAG or its future generated DAG while applying this skill.**
+
+1. Read `templates/author-complex-dag-request.yaml`. Inspect the task, project, and complete source corpus; derive goal/completion, anchors and inspection bounds, source records and token estimates, mutable/forbidden paths, ownership clusters, convergence owners, and exact commands.
+2. Record explicit authority and precedence. Never invent policy. Block and ask only for required decisions that project evidence cannot establish.
+3. Keep `generated_dag.path: .omp/generated-complex-task.yaml`. Default to `fail-if-exists`; use `replace-matching-sha256` only when replacement is explicitly required and the current digest is known.
+4. Copy `templates/author-complex-dag.yaml` verbatim to `.omp/author-complex-dag.yaml`. Write the completed request to `.omp-swarm/author-complex-dag/input/request.yaml`.
+5. Confirm the corpus fits the eight fixed reader shards. If not, widen reader nodes, shard manifests, coverage dependencies, and `shard_count` together; never omit sources.
+6. Validate only:
+
+   ```bash
+   omp-swarm validate .omp/author-complex-dag.yaml
+   ```
+
+7. Inspect the printed waves and recheck every request binding against the project. Deliver the configured authoring DAG, persistent request, resolved workspace, ownership, expected waves, and successful validation evidence.
+
+`.omp/generated-complex-task.yaml` and runtime reports do not exist yet. They are future outputs of an explicit execution outside this authoring skill; never claim or create them here.
 
 ## Delivery
 
-Report the DAG path, resolved project workspace, project-path ownership, DAG-owned artifact paths, execution waves, and successful validation command.
+Report the DAG path, resolved project workspace, project and DAG-artifact ownership by phase, bounded correction suffix, acceptance-predicate-to-owner reachability, execution waves, and successful validation command.

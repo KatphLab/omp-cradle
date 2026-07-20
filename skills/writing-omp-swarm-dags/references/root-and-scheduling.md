@@ -26,10 +26,13 @@ swarm:
 | `target_count`   | no          | Integer `>= 1`; default `1`; values above `1` require `pipeline`.                                                                                                  |
 | `concurrency`    | yes         | Integer `>= 1`; maximum simultaneous agent nodes across the root and imported graphs. Bash nodes do not consume this budget.                                       |
 | `model`          | no          | Non-empty default model selector for agents declared in this graph. An agent-level model overrides it. Imported children use their own agent/graph model settings. |
+| `model_routing`  | no          | Opt-in cost-aware alias routing performed recursively before state initialization; read `model-routing.md`.                                                        |
 | `restart_policy` | conditional | Required in this graph when any local agent or graph declares `control`; read `control-and-recovery.md`.                                                           |
 | `nodes`          | yes         | Non-empty map of local node IDs to `agent`, `bash`, or `graph` definitions.                                                                                        |
 
 The runner resolves a relative workspace from the root YAML's directory and creates it if absent. `omp-swarm validate` does not create or inspect the workspace; project anchors need a workflow guard.
+
+`omp-swarm validate` remains offline, including for routed DAGs: it does not discover authentication, load mutable settings, refresh the model catalog, resolve aliases, or create state. Use `omp-swarm plan-models path/to/swarm.yaml` for the authenticated read-only catalog refresh and complete pre-execution cost plan.
 
 ## Dependency Fields
 
@@ -43,6 +46,12 @@ Every node type may declare:
 Both forms describe scheduling edges and may state the same edge from opposite ends. Targets must exist in the same YAML, must not name the node itself, and must not form a cycle. Parent nodes cannot target IDs inside an imported child.
 
 Dependencies do not carry files, merge source changes, or require the predecessor's result to be successful. They only wait for settlement. If failure matters, add an explicit result contract and a downstream decision-maker.
+
+Scheduler reachability is not correction reachability. For each allowed restart
+target, compute the target plus its transitive dependents that become stale. Map
+every possible restart reason to a node in that suffix whose declared mutable
+paths include the required project or DAG artifact. A valid target that cannot
+change the failing predicate produces bounded repetition, not recovery.
 
 ## Modes and Waves
 
@@ -70,7 +79,7 @@ After the YAML and every imported child exist, run:
 omp-swarm validate path/to/swarm.yaml
 ```
 
-Validation recursively hydrates file-backed and inline child graphs, checks supported values and cross-field constraints, rejects dependency/import cycles and invalid control targets, and prints execution waves. It does not execute nodes, check project anchors, prove path ownership, or run project verification.
+Validation recursively hydrates file-backed and inline child graphs, checks supported values and cross-field constraints, rejects dependency/import cycles and invalid control targets, and prints execution waves. It does not execute nodes, check project anchors, prove path ownership or correction reachability, validate report-status lifecycle, or run project verification.
 
 Delivery requires:
 
@@ -78,5 +87,6 @@ Delivery requires:
 - Printed waves matching intended source ownership and review order.
 - The resolved project workspace.
 - Project paths each modifying node may own.
+- The invalidated suffix and authorized correction owner for every possible restart reason.
 - DAG-owned evidence paths.
 - The focused project command the executed workflow will use.

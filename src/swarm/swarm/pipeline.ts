@@ -12,7 +12,9 @@ import {
   detectCycles,
 } from './dag'
 import { executeSwarmAgent, type SwarmExecutorOptions } from './executor'
+import { findModelRoutingNode, type ModelRoutingPlan } from './model-routing'
 import type {
+  SwarmAgent,
   SwarmBashNode,
   SwarmDefinition,
   SwarmGraphNode,
@@ -158,15 +160,21 @@ export class PipelineController {
   readonly #stateTracker: StateTracker
   readonly #dependencies: Map<string, Set<string>>
   readonly #agentConcurrencyLimiter: AgentConcurrencyLimiter
+  readonly #modelRoutingPlan: ModelRoutingPlan | undefined
+  readonly #graphPath: string
 
   constructor(
     swarmDefinition: SwarmDefinition,
     waves: string[][],
     stateTracker: StateTracker,
+    modelRoutingPlan?: ModelRoutingPlan,
+    graphPath = 'root',
   ) {
     this.#swarmDefinition = swarmDefinition
     this.#waves = waves
     this.#stateTracker = stateTracker
+    this.#modelRoutingPlan = modelRoutingPlan
+    this.#graphPath = graphPath
     this.#dependencies = buildDependencyGraph(swarmDefinition)
     this.#agentConcurrencyLimiter = new Semaphore(swarmDefinition.concurrency)
   }
@@ -217,7 +225,13 @@ export class PipelineController {
 
   async #syncAgentModelMetadata(): Promise<void> {
     for (const [name, agent] of this.#swarmDefinition.agents) {
-      const model = agent.model ?? this.#swarmDefinition.model
+      const model =
+        this.#modelRoutingPlan === undefined
+          ? (agent.model ?? this.#swarmDefinition.model)
+          : findModelRoutingNode(
+              this.#modelRoutingPlan,
+              `${this.#graphPath}/${name}`,
+            ).selectedAlias
       if (model !== undefined)
         await this.#stateTracker.updateAgent(name, { model })
     }
@@ -769,7 +783,7 @@ export class PipelineController {
   }
 
   #buildAgentExecutorOptions(
-    agent: { model?: string },
+    agent: Pick<SwarmAgent, 'name' | 'model'>,
     iteration: number,
     attempt: number,
     waveIndex: number,
@@ -788,7 +802,13 @@ export class PipelineController {
       },
       stateTracker: this.#stateTracker,
     }
-    const modelOverride = agent.model ?? this.#swarmDefinition.model
+    const modelOverride =
+      this.#modelRoutingPlan === undefined
+        ? (agent.model ?? this.#swarmDefinition.model)
+        : findModelRoutingNode(
+            this.#modelRoutingPlan,
+            `${this.#graphPath}/${agent.name}`,
+          ).selectedAlias
     if (modelOverride !== undefined)
       executorOptions.modelOverride = modelOverride
     if (options.signal !== undefined) executorOptions.signal = options.signal
@@ -1251,14 +1271,19 @@ export class PipelineController {
       )
     }
     const waves = buildExecutionWaves(dependencies)
+    const childGraphPath = `${this.#graphPath}/${graphName}`
     const stateTracker = await createInitializedStateTracker(
       options.workspace,
       childDefinition,
+      this.#modelRoutingPlan,
+      childGraphPath,
     )
     const controller = new PipelineController(
       childDefinition,
       waves,
       stateTracker,
+      this.#modelRoutingPlan,
+      childGraphPath,
     )
     const runOptions: PipelineOptions = {
       workspace: options.workspace,

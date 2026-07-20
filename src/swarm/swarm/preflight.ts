@@ -4,12 +4,13 @@ import {
   collectTransitiveDependencies,
   detectCycles,
 } from './dag'
+import { validateModelRoutingPolicies } from './model-routing'
 import { type SwarmDefinition, validateSwarmDefinition } from './schema'
 
 export function preflightSwarmDefinition(
   swarmDefinition: SwarmDefinition,
 ): string[] {
-  const errors: string[] = []
+  const errors = validateModelRoutingPolicies(swarmDefinition)
   collectPreflightErrors(swarmDefinition, errors)
   return errors
 }
