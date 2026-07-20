@@ -47,6 +47,12 @@ Both forms describe scheduling edges and may state the same edge from opposite e
 
 Dependencies do not carry files, merge source changes, or require the predecessor's result to be successful. They only wait for settlement. If failure matters, add an explicit result contract and a downstream decision-maker.
 
+Scheduler reachability is not correction reachability. For each allowed restart
+target, compute the target plus its transitive dependents that become stale. Map
+every possible restart reason to a node in that suffix whose declared mutable
+paths include the required project or DAG artifact. A valid target that cannot
+change the failing predicate produces bounded repetition, not recovery.
+
 ## Modes and Waves
 
 - `parallel`: all dependency-ready nodes may run together, subject to agent concurrency.
@@ -73,7 +79,7 @@ After the YAML and every imported child exist, run:
 omp-swarm validate path/to/swarm.yaml
 ```
 
-Validation recursively hydrates file-backed and inline child graphs, checks supported values and cross-field constraints, rejects dependency/import cycles and invalid control targets, and prints execution waves. It does not execute nodes, check project anchors, prove path ownership, or run project verification.
+Validation recursively hydrates file-backed and inline child graphs, checks supported values and cross-field constraints, rejects dependency/import cycles and invalid control targets, and prints execution waves. It does not execute nodes, check project anchors, prove path ownership or correction reachability, validate report-status lifecycle, or run project verification.
 
 Delivery requires:
 
@@ -81,5 +87,6 @@ Delivery requires:
 - Printed waves matching intended source ownership and review order.
 - The resolved project workspace.
 - Project paths each modifying node may own.
+- The invalidated suffix and authorized correction owner for every possible restart reason.
 - DAG-owned evidence paths.
 - The focused project command the executed workflow will use.

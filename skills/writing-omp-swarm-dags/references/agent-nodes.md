@@ -51,6 +51,11 @@ Write `task` in this order:
 
 Do not force exact source filenames before investigation can know them. Instead, give one investigation node a bounded project scope and have it write the exact path/ownership plan consumed by the implementer.
 
+Status belongs to the node's own objective. A discovery node that completely
+identifies absent or defective target implementation is READY with gaps to
+implement. It is BLOCKED only when unavailable/malformed authority, an unresolved
+contradiction, or another missing prerequisite prevents completing the discovery.
+
 ## Choosing Agent Boundaries
 
 An agent node earns a boundary through at least one of:
@@ -72,6 +77,14 @@ Reviewers inspect the actual project tree and focused check evidence. A read-onl
 - Accept and write `action: continue` through control.
 - Reject with concrete findings and restart the upstream implementer.
 - Fail when safe completion is impossible.
+
+Every restartable finding must name the required mutation and an authorized
+owner in the selected target's invalidated suffix. Inspecting or recovering an
+upstream handoff does not grant permission to rewrite it. A reviewer must not
+turn a merely inspected historical handoff into a new READY acceptance gate. If
+the required owner is unreachable, reject or supersede a stale non-authoritative
+finding, select a reachable allowed target, or fail; never restart an incapable
+node.
 
 On restart, the implementer sees its existing edits; no filesystem rollback occurs. Its task must read the review report, inspect current source, and repair idempotently. A reviewer must not claim independence after modifying the source it approves.
 

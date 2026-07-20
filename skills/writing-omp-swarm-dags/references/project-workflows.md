@@ -25,7 +25,7 @@ The swarm runtime does not create per-node worktrees, merge concurrent edits, sn
 Use only the boundaries the workflow needs:
 
 1. **Project guard:** confirm the resolved workspace is the intended project and prepare only the DAG-owned run directory.
-2. **Investigation:** when target files are not known in advance, inspect a bounded module or directory and write an implementation plan naming the discovered files. Unknown paths are a reason for a discovery objective, not a reason to isolate the work from the project.
+2. **Investigation:** when target files are not known in advance, inspect a bounded module or directory and write an implementation plan naming the discovered files. An investigation is READY when it completely describes authoritative current state and implementation gaps. Missing target implementation is a finding, not a blocker; reserve BLOCKED for missing/malformed authority, unresolved contradiction, or inability to complete the investigation.
 3. **Implementation:** edit the actual project files in place. One implementation node may own a coherent change across production code, its tests, and tightly coupled configuration.
 4. **Project verification:** run the repository's focused check, build, lint, typecheck, or behavioral command against the modified project.
 5. **Independent review:** inspect the actual changed source and verification evidence. Continue on acceptance; for a bounded correction loop, restart the implementation node with concrete findings.
@@ -39,6 +39,12 @@ Exact paths are ideal when known. When they are not known, the task must bound d
 
 Parallel modifiers are safe only when their mutable path sets are disjoint. If two agents may touch the same source file, manifest, lockfile, generated index, or migration list, either serialize them or assign that shared path to one later integrator. The runtime has no path lock or conflict detector.
 
+When ownership transfers to a later integrator, name the exact dependency
+boundary. Earlier writers cease ownership after settlement; the integrator owns
+only the declared transferred paths. A correction target must remain on the
+current-owner side of that boundary unless its invalidated suffix safely
+re-establishes the full transfer.
+
 Readers and reviewers must wait for the writers whose project state they inspect. Dependencies order execution; they do not carry data or imply success.
 
 ## Project-State Contract
@@ -48,10 +54,12 @@ For every modifying node, define:
 - **Outcome:** observable project behavior or artifact.
 - **Inspect:** bounded project scope and declared upstream reports.
 - **Edit:** owned project paths, or the plan that supplies them.
+- **Phase/current owner:** the node authorized to mutate each project and DAG path before and after any ownership transfer.
 - **Do not edit:** sibling ownership and unrelated user work.
 - **Verify:** focused project command or observable manual check.
 - **Report:** exact DAG-owned evidence path, if a downstream node needs it.
 - **Retry:** how rerunning against an already-modified tree remains idempotent.
+- **Correction reachability:** for each possible rejection reason, the required mutation and an authorized owner inside the selected restart suffix.
 - **Failure:** actionable evidence while preserving unrelated project state.
 
 Review and verification must use the real project tree, not a detached summary of proposed edits. Source control commits are optional workflow outputs only when the user explicitly requires them.

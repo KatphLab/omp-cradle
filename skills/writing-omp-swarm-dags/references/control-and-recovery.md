@@ -33,6 +33,19 @@ control:
 
 The runtime reads a control decision only after the controlled node executes successfully. The task must always write exactly one valid decision before returning.
 
+### Control-Target Correction Reachability
+
+For every condition that may emit `restart`, name the exact project path,
+handoff, report, or status predicate that must change. The selected target's
+invalidated suffix must contain a node authorized to make that mutation at the
+current ownership phase. Structural eligibility as self/transitive-upstream is
+necessary but insufficient.
+
+Recovery by rereading authority can supersede stale evidence, but it does not
+change that evidence file or transfer its ownership. If acceptance still requires
+the stale file to change, restart its reachable owner or fail. Do not consume a
+restart on a target that cannot make the reason false.
+
 ## Control Signal Grammar
 
 | Signal field | Contract                                                                       |
@@ -78,6 +91,10 @@ Scheduler rewind does not restore source files, reports, or build outputs. Rerun
 - Do not use rewind to simulate source rollback.
 
 A `fail` decision fails the current iteration. In pipeline mode, later target iterations still run, but the final run remains failed.
+
+Restart limits bound execution; they do not prove convergence. An unreachable
+correction repeats until `max_restarts`, `max_restarts_per_target`, or
+`max_node_attempts` is exhausted and the run fails.
 
 ## External Restart and Resume
 

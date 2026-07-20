@@ -1,6 +1,6 @@
 ---
 name: writing-omp-swarm-dags
-description: Use when authoring OMP swarm YAML DAGs for existing projects, especially large specifications, multi-document reviews, source changes, project checks, imported graphs, iterations, control rewinds, or restart/resume.
+description: Use when authoring OMP swarm YAML DAGs for existing projects, especially source changes, project checks, imports, iterations, ownership transfers, control rewinds, restart loops, or resume behavior.
 ---
 
 # Writing OMP Swarm DAGs
@@ -38,8 +38,14 @@ Templates are starting artifacts, not schema documentation.
 1. Define the outcome, project root and anchors, exact commands, and mutable, forbidden, and inspect-only paths.
 2. Read routed references; record their decisions. Missing workspace, ownership, command, or recovery decisions block authoring.
 3. Draw the smallest graph with one writer per mutable path. Agents edit project files; DAG paths hold coordination and evidence.
-4. Interpret meaningful Bash results with a downstream agent. Make every retry idempotent; rewind does not restore files.
-5. Validate the root and imports, fix every diagnostic, and confirm printed waves:
+4. Prove bootstrap and correction reachability before validation. For every hard
+   status gate and possible restart reason, record the required mutation, its
+   phase-current owner, the allowed restart target, and an authorized writer in
+   that target's invalidated suffix. Missing target implementation is a completed
+   analysis finding, not a blocker to planning its implementation. Reject any
+   restart-worthy predicate without a reachable owner.
+5. Interpret meaningful Bash results with a downstream agent. Make every retry idempotent; rewind does not restore files.
+6. Validate the root and imports, fix every diagnostic, and confirm printed waves:
 
 ```bash
 omp-swarm validate path/to/swarm.yaml
@@ -68,4 +74,4 @@ Select this mode only when the requested deliverable is the authoring DAG itself
 
 ## Delivery
 
-Report the DAG path, resolved project workspace, project-path ownership, DAG-owned artifact paths, execution waves, and successful validation command.
+Report the DAG path, resolved project workspace, project and DAG-artifact ownership by phase, bounded correction suffix, acceptance-predicate-to-owner reachability, execution waves, and successful validation command.
