@@ -1,0 +1,155 @@
+# yaml-language-server: $schema=../../../dag.schema.json
+#
+# Reusable approved real-behavior planning phase for one selected item. The terminal
+# reviewer writes the parent process graph's control decision.
+swarm:
+  name: spec-to-code-item-behavior-plan
+  workspace: /home/katph/personal/omp-cradle
+  mode: parallel
+  target_count: 1
+  model: pi/default
+  concurrency: 1
+  nodes:
+    plan_behavior:
+      type: agent
+      role: Current-item behavioral verification planner
+      workload:
+        profile: planning
+        estimated_usage:
+          input_tokens: 30000
+          output_tokens: 7000
+          cache_read_tokens: 14000
+          cache_write_tokens: 3000
+      task: |
+        ### Goal
+        Write an approval-ready real-behavior verification plan for the selected item.
+
+        ### Inputs
+        - Current-item and cited requirements.
+        - Accepted contract source and contract-review artifacts.
+        - Current project testing policy and public behavior.
+        - Exact revision-1 test-approval input.
+        - Only matching behavior-plan or later item-review deltas.
+
+        ### Files to touch
+        - run/handoffs/test-plan.json: write schema_revision, batch_id, selection_id,
+          item_id, requirement_id, specification_fingerprint, input_fingerprint,
+          contract_plan_sha256, contract_review_sha256, method
+          project-native-reproduction, scenarios[], execution_design, exclusions[],
+          plan_fingerprint, status (READY, SKIPPED, or BLOCKED), reason, and generated_at.
+          Each scenarios[] record contains scenario_id, criterion_ids[], preconditions[],
+          inputs, action, observable_interface, expected_result, boundaries[],
+          state_transition, failure_case, and evidence_required[].
+          execution_design contains harness, artifact_kind, artifact_paths[],
+          invocation, cwd, environment_constraints[], and cleanup.
+        - run/reports/test-plan.json: write schema_revision, batch_id, selection_id,
+          item_id, input_fingerprint, contract_plan_sha256, test_plan_path,
+          test_plan_sha256, plan_fingerprint, approval_id, approval_match,
+          mapped_criterion_ids[], unmapped_criterion_ids[], matched_delta_ids[], status
+          (READY, SKIPPED, or BLOCKED) matching the handoff,
+          reason, and generated_at.
+
+        ### Task
+        1. Match batch, selection, item, contract, source, and approval fingerprints.
+        2. Map every logical criterion to an observable scenario, boundary, state
+           transition, failure, and expected result.
+        3. Use the generic method identifier project-native-reproduction.
+        4. Discover the concrete harness and invocation from current project policy and
+           project-owned configuration.
+        5. Exclude cosmetic, source-text, field-existence-only, mock-plumbing, and
+           framework-incidental assertions.
+        6. On NO_WORK, write current SKIPPED artifacts.
+
+        ### Outputs
+        - One current behavior handoff and matching report.
+        - A plan fingerprint bound to the selected contracts, scenarios, method, and
+          execution design.
+
+        ### Rules
+        - Do not edit project files, durable state, specifications, signals, or
+          runtime-owned .swarm_* paths.
+        - Do not assume a language, package manager, test framework, source layout, or
+          command.
+        - Planning never creates or expands operator approval.
+        - Replace both owned artifacts atomically.
+
+        ### Retry and failure
+        - Preserve already approved scenarios unless current evidence or a matching
+          review delta requires change.
+        - Report BLOCKED for unsafe or unapproved methods.
+      reports_to: [review_behavior_plan]
+
+    review_behavior_plan:
+      type: agent
+      role: Independent behavioral plan and approval reviewer
+      workload:
+        profile: review
+        estimated_usage:
+          input_tokens: 35000
+          output_tokens: 7000
+          cache_read_tokens: 16000
+          cache_write_tokens: 3000
+      task: |
+        ### Goal
+        Independently accept the behavior plan, request one reachable parent correction,
+        pause for operator approval, or fail safely.
+
+        ### Inputs
+        - Current source, requirements, accepted contracts, and project policy.
+        - Current-item and test-plan artifacts.
+        - Exact revision-1 input/test-approval.json.
+        - Matching behavior-plan and later item-review deltas.
+        - Existing state/approval-pauses/<item-id>.json when present.
+
+        ### Files to touch
+        - run/reports/test-plan-review.json: write schema_revision, batch_id,
+          selection_id, item_id, input_fingerprint, contract_review_sha256,
+          test_plan_sha256, plan_fingerprint, approval_match{approval_id,
+          requirement_id,spec_fingerprint,plan_fingerprint,allowed_methods,matched,
+          reason}, decision (ACCEPTED, REJECTED, SKIPPED, APPROVAL_REQUIRED, or BLOCKED),
+          findings[], reason, and generated_at. Each findings[] record contains
+          finding_id, criterion_id, severity, evidence[], required_mutation, owner,
+          expected_observable_result, and status.
+        - run/signals/behavior-plan-phase.control.yaml: write action and reason. For
+          restart, also write target as exactly select_or_resume_item, contract_phase,
+          or behavior_plan_phase. For continue or fail, omit target.
+        - state/approval-pauses/<item-id>.json: write schema_revision, item_id,
+          requirement_id, specification_fingerprint, contract_fingerprint,
+          plan_fingerprint, method_ids[], observed_approval_fingerprints[],
+          status (APPROVAL_REQUIRED or RESOLVED), approval_id, reason, created_at, and
+          updated_at. Preserve created_at when resolving an existing pause.
+
+        ### Task
+        1. Match approval only when requirement and specification fingerprints match,
+           every method is allowed, and plan_fingerprint is null or exactly the
+           generated fingerprint. Reject unknown methods and duplicate matches.
+        2. Verify every criterion is observable, relevant boundaries and real failures
+           are covered, exclusions follow policy, all fingerprints match, and no
+           blocker remains.
+        3. Before failing solely for missing or mismatched approval, write
+           APPROVAL_REQUIRED with schema revision; IDs; specification, contract, and
+           plan fingerprints; observed approval fingerprints; and method IDs.
+        4. Replace a matching prior pause with RESOLVED.
+        5. Continue on accepted evidence, including valid NO_WORK as SKIPPED.
+        6. Restart select_or_resume_item for interpretation defects, contract_phase for
+           contract causes, or behavior_plan_phase for plan or review defects.
+
+        ### Outputs
+        - One current test-plan review.
+        - One valid parent control decision.
+        - When approval state changes, one durable approval-pause record.
+
+        ### Rules
+        - Do not edit plans, contracts, source, ledger, operator inputs,
+          specifications, or runtime-owned .swarm_* paths.
+        - The durable pause is evidence of missing approval, not approval itself.
+        - Replace owned files atomically.
+
+        ### Retry and failure
+        - For approval failure, write the pause and fail; a later normal run owns the
+          bounded approval-only resume.
+        - Fail for forbidden work, irreconcilable authority, out-of-scope correction,
+          no progress, or exhausted limits.
+        - Every restart must name one allowed parent target, new evidence, and the
+          artifact its reachable writer can change.
+      waits_for: [plan_behavior]

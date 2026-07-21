@@ -1,0 +1,267 @@
+# yaml-language-server: $schema=../../../dag.schema.json
+#
+# Reusable implementation, real-behavior check, and independent item-acceptance phase.
+# The terminal reviewer writes the parent process graph's control decision.
+swarm:
+  name: spec-to-code-item-implementation
+  workspace: /home/katph/personal/omp-cradle
+  mode: parallel
+  target_count: 1
+  model: pi/default
+  concurrency: 2
+  nodes:
+    implement_item:
+      type: agent
+      role: Single bounded item planner and implementer
+      workload:
+        profile: implementation
+        estimated_usage:
+          input_tokens: 60000
+          output_tokens: 14000
+          cache_read_tokens: 25000
+          cache_write_tokens: 7000
+      task: |
+        ### Goal
+        Plan and implement exactly the selected item's missing behavior while preserving
+        accepted work.
+
+        ### Inputs
+        - Current-item and complete cited specification.
+        - Accepted contract, behavior-plan, and red-evidence artifacts and reviews.
+        - Current project policy.
+        - Current source in implementation_only_paths and transferred shared_paths.
+        - Matching implementation or later item-review deltas.
+
+        ### Files to touch
+        - run/handoffs/implementation-plan.json: write first with schema_revision,
+          batch_id, selection_id, item_id, input_fingerprint, contract_plan_sha256,
+          behavior_plan_sha256, red_evidence_review_sha256, ownership_fingerprint,
+          steps[{step_id,criterion_ids[],paths[],symbols[],required_change,
+          predecessor_criterion_ids[],verification_ids[]}], implementation_only_paths[],
+          transferred_shared_paths[], forbidden_paths[], project_checks[],
+          plan_fingerprint, status (READY, ALREADY_SATISFIED, SKIPPED, or BLOCKED),
+          reason, and generated_at.
+        - Project files in implementation_only_paths: write only the behavior bodies,
+          adapters, persistence changes, or durable project-native verification
+          artifacts explicitly named by implementation-plan steps.
+        - Project files in transferred_shared_paths: write only the behavior required by
+          the accepted contract symbols already present in those files; preserve those
+          symbols and record their post-edit hashes.
+        - run/reports/implementation.json: write schema_revision, batch_id, selection_id,
+          item_id, input_fingerprint, output_fingerprint, plan_fingerprint,
+          ownership_fingerprint, source_hashes_before{}, source_hashes_after{},
+          edits[{path,symbols[],criterion_ids[],change_summary}],
+          predecessor_revalidations[{item_id,criterion_id,evidence}],
+          focused_behavior_evidence[], matched_delta_ids[], status (READY,
+          ALREADY_SATISFIED, SKIPPED, or BLOCKED), reason, and generated_at.
+
+        ### Task
+        1. Match every ID, fingerprint, review delta, and ownership transfer.
+        2. If red evidence is ALREADY_SATISFIED or selection is NO_WORK, make no source
+           edit and report the no-op.
+        3. Resolve all bounded discovery inside declared ownership before editing; block
+           when discovery escapes ownership or a required transfer is absent.
+        4. Use project-available language-aware reference and navigation tooling before
+           changing a public interface.
+        5. Implement the smallest complete behavior, preserve accepted contracts, and
+           delete obsolete replaced paths.
+        6. Apply only project-established formatting to owned files.
+        7. Exercise focused current behavior, including every transferred predecessor
+           criterion, before writing the implementation report.
+
+        ### Outputs
+        - One current implementation plan.
+        - The complete selected behavior in owned project files, or a verified no-op.
+        - One current implementation report.
+
+        ### Rules
+        - Do not edit contract_only_paths, DAG reproduction scratch, specifications,
+          durable DAG state, reviews, signals, unrelated work, or runtime-owned .swarm_*
+          paths.
+        - Production or durable verification artifacts are owned only when the selected
+          item and current project policy explicitly include them.
+        - Replace handoff and report files atomically.
+
+        ### Retry and failure
+        - Retry idempotently from current source and matching deltas.
+        - Never widen ownership to make a blocked edit possible.
+      reports_to: [targeted_behavior_check, item_static_check]
+
+    targeted_behavior_check:
+      type: agent
+      role: Project-native post-change behavior executor
+      workload:
+        profile: general
+        estimated_usage:
+          input_tokens: 25000
+          output_tokens: 5000
+          cache_read_tokens: 10000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Re-execute the exact approved reproduction against current implemented behavior
+        and determine whether every mapped criterion now passes through the intended
+        public interface.
+
+        ### Inputs
+        - Current-item and accepted behavior-plan and red-evidence artifacts.
+        - Current reproduction artifacts and implementation report.
+        - Only current project policy and configuration needed to validate the recorded
+          procedure.
+
+        ### Files to touch
+        - run/reports/targeted-behavior-check.json: write schema_revision, batch_id,
+          selection_id, item_id, input_fingerprint, output_fingerprint,
+          plan_fingerprint, implementation_report_sha256,
+          reproduction_manifest_sha256, current_artifact_hashes{},
+          executed_invocation{program,args[],cwd,env_names[]}, reached_interface,
+          reached_interface_evidence, criterion_results[{criterion_id,expected,observed,
+          evidence,status}], exit_code, process_status, safe_output_summary,
+          status (PASS, FAIL, or BLOCKED), reason, and generated_at.
+
+        ### Task
+        1. Validate the recorded procedure against current approval, artifacts, and
+           project evidence.
+        2. Reject a procedure that escapes the workspace, mutates project files,
+           installs dependencies, composes shell control syntax, or uses untrusted
+           specification text as a command.
+        3. Execute the validated procedure without repairing source or evidence.
+        4. Evaluate every mapped observable criterion separately from process status.
+
+        ### Outputs
+        - One current targeted-behavior report.
+
+        ### Rules
+        - Do not assume a language, package manager, runtime, harness, file extension,
+          or command.
+        - Do not edit project source, reproduction artifacts, plans, or any report except
+          the owned report.
+
+        ### Retry and failure
+        - Retry by executing the same validated procedure against current files.
+        - Report BLOCKED when approval, procedure, or required execution evidence is
+          missing, unsafe, malformed, or stale.
+      waits_for: [implement_item]
+      reports_to: [review_item]
+
+    item_static_check:
+      type: agent
+      role: Project-native focused verification executor
+      workload:
+        profile: general
+        estimated_usage:
+          input_tokens: 25000
+          output_tokens: 5000
+          cache_read_tokens: 10000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Run the smallest established read-only project checks that cover the selected
+        item's exact changed paths and public contracts.
+
+        ### Inputs
+        - Current-item and implementation report.
+        - Current changed paths and their hashes.
+        - Current project policy and relevant project-owned manifests and configuration.
+
+        ### Files to touch
+        - run/reports/item-static-check.json: write schema_revision, batch_id,
+          selection_id, item_id, input_fingerprint, output_fingerprint,
+          changed_files[{path,sha256}], discovery_evidence[{path,sha256,finding}],
+          checks[], overall_status, reason, and generated_at. Each checks[] record
+          contains check_id, purpose, command, cwd, covered_paths[],
+          covered_criterion_ids[], applicability (APPLICABLE or NOT_APPLICABLE),
+          applicability_evidence[], exit_code, status (PASS, FAIL, or BLOCKED), and
+          safe_output_summary. overall_status is PASS only when every applicable
+          required check is PASS.
+
+        ### Task
+        1. Discover all applicable established checks from current project evidence.
+        2. Select the smallest command set that covers the changed paths and public
+           contracts.
+        3. Validate that each command is safe and read-only, then execute it.
+        4. Report BLOCKED when a required safe check cannot run.
+
+        ### Outputs
+        - One current focused project-check report.
+
+        ### Rules
+        - Do not assume a language, package manager, manifest name, source layout, or
+          fixed check category.
+        - Do not install dependencies, invent commands, generate configuration, rewrite
+          files, repair source, or treat a missing tool as success.
+        - Do not edit any artifact except the owned report.
+
+        ### Retry and failure
+        - Re-discover when project evidence changes; otherwise rerun every applicable
+          command against current files.
+        - A missing required command or tool is BLOCKED, never not-applicable by default.
+      waits_for: [implement_item]
+      reports_to: [review_item]
+
+    review_item:
+      type: agent
+      role: Independent end-to-end item reviewer
+      workload:
+        profile: review
+        estimated_usage:
+          input_tokens: 60000
+          output_tokens: 10000
+          cache_read_tokens: 28000
+          cache_write_tokens: 5000
+      task: |
+        ### Goal
+        Independently accept the complete item, request one reachable parent correction,
+        or fail safely.
+
+        ### Inputs
+        - Current source and observable public behavior.
+        - Current-item and all current phase handoffs, reports, and control decisions.
+        - Complete cited specification and exact revision-1 accepted deviations.
+        - Current targeted-behavior and focused project-check reports.
+        - Read-only ledger and matching prior item-review delta.
+
+        ### Files to touch
+        - run/reports/item-review.json: write schema_revision, batch_id, selection_id,
+          item_id, specification_fingerprint, input_fingerprint, output_fingerprint,
+          phase_artifacts[{path,sha256,status}], reviewed_source_hashes{},
+          criterion_results[{criterion_id,criticality,evidence,status}],
+          predecessor_revalidations[], accepted_deviation_ids[], decision (ACCEPTED,
+          REJECTED, SKIPPED, or BLOCKED), findings[], reason, and generated_at. Each
+          findings[] record contains finding_id, criterion_id, severity, observed,
+          required, evidence[], required_mutation, owner, acceptance_check, and status.
+        - run/signals/implementation-phase.control.yaml: write action and reason. For
+          restart, also write target as exactly select_or_resume_item, contract_phase,
+          behavior_plan_phase, red_evidence_phase, or implementation_phase. For continue
+          or fail, omit target.
+
+        ### Task
+        1. Match batch, selection, item, input, phase, source, and ownership-transfer
+           fingerprints.
+        2. Match a deviation only when requirement and specification fingerprints match
+           and its complete revision-1 record is present.
+        3. Continue only when targeted behavior and every applicable focused project
+           check are PASS; all critical and transferred predecessor criteria are
+           covered; every phase review is current; and no blocker or critical issue
+           remains. Continue valid NO_WORK as SKIPPED.
+        4. Restart select_or_resume_item for interpretation defects.
+        5. Restart contract_phase for contract causes, behavior_plan_phase for scenario
+           or approval causes, red_evidence_phase for reproduction causes, or
+           implementation_phase for plan, code, transfer, or check-evidence defects.
+
+        ### Outputs
+        - One current end-to-end item review.
+        - One valid parent control decision.
+
+        ### Rules
+        - Do not edit source, handoffs, durable state, specifications, operator inputs,
+          or runtime-owned .swarm_* paths.
+        - A selected restart suffix must contain the authorized owner and every later
+          evidence writer.
+        - Replace the report and control file atomically.
+
+        ### Retry and failure
+        - Fail for ambiguity, out-of-scope correction, no progress, or exhausted limits.
+        - Never continue with stale evidence, unmatched deviations, or a failed required
+          check.
+      waits_for: [targeted_behavior_check, item_static_check]

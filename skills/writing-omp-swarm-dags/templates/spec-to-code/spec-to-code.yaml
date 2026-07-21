@@ -1,0 +1,349 @@
+# yaml-language-server: $schema=../../dag.schema.json
+#
+# Reusable, resumable specification-to-code workflow.
+#
+# Required operator-owned input contracts (never rewritten by this DAG):
+#   .omp-swarm/spec-to-code/input/spec-sources.json
+#     {"schema_revision":1,
+#      "sources":[{"id":"primary","path":"path/to/spec.md"}],
+#      "precedence":["primary"],"item_limit":8,"item_pass_limit":6,
+#      "approval_resume_limit":3}
+#     Source IDs are unique. precedence lists every source ID exactly once, highest first.
+#   .omp-swarm/spec-to-code/input/test-approval.json
+#     {"schema_revision":1,
+#      "approvals":[{"approval_id":"TA-1","requirement_id":"REQ-1",
+#      "spec_fingerprint":"sha256:...","plan_fingerprint":null,
+#      "allowed_methods":["project-native-reproduction"]}]}
+#     approvals may be empty. A null plan_fingerprint pre-approves only generated plans
+#     whose methods are a subset of allowed_methods; a non-null value must exactly match.
+#   .omp-swarm/spec-to-code/input/accepted-deviations.json
+#     {"schema_revision":1,
+#      "deviations":[{"deviation_id":"DEV-1","requirement_id":"REQ-1",
+#      "spec_fingerprint":"sha256:...","rationale":"...","risk":"...",
+#      "evidence":"...","revisit_condition":"..."}]}
+#     deviations may be empty. Every non-empty string and fingerprint is required.
+#
+# Durable state contract:
+#   prepare_index initially owns state/spec-index.json, state/item-ledger.json, and
+#   state/active-batch.json. process_one_item transfers ledger ownership serially from
+#   select_or_resume_item to advance_item and transfers active-batch ownership to
+#   advance_item once per item. completion_audit owns both after the repeated graph
+#   settles. The next normal/resumed run transfers both back to prepare_index.
+#   state/audit contains immutable-by-selection acceptance evidence. No node reads or
+#   edits runtime-owned .swarm_* state.
+#
+# Every execution of prepare_index safely rebuilds the DAG-owned run/ subtree from
+# durable state before downstream work. One child round handles one stable requirement
+# item. Eight rounds form one bounded batch; another normal run resumes the durable
+# cursor. Control rewinds and durable item/approval limits bound all retry paths.
+swarm:
+  name: spec-to-code
+  workspace: /home/katph/personal/omp-cradle
+  mode: parallel
+  target_count: 1
+  model: pi/default
+  concurrency: 4
+  model_routing:
+    enabled: true
+    allowed_aliases:
+      - pi/smol
+      - pi/task
+      - pi/default
+      - pi/slow
+      - pi/plan
+      - pi/advisor
+    minimum_quality: standard
+    max_estimated_cost_usd: 1000
+    # Accept authenticated catalog zeroes as bundled/local zero-marginal-cost access.
+    allow_zero_marginal_cost: true
+    default_usage:
+      input_tokens: 20000
+      output_tokens: 4000
+      cache_read_tokens: 5000
+      cache_write_tokens: 2000
+  restart_policy:
+    max_restarts: 5
+    max_restarts_per_target: 10
+    max_node_attempts: 10
+  nodes:
+    prepare_index:
+      type: agent
+      role: Specification workspace guard and manifest owner
+      workload:
+        profile: planning
+        estimated_usage:
+          input_tokens: 80000
+          output_tokens: 12000
+          cache_read_tokens: 30000
+          cache_write_tokens: 8000
+      task: |
+        ### Goal
+        Create or resume a fingerprinted requirement manifest and a bounded work queue
+        for the existing project.
+
+        ### Inputs
+        - The three revision-1 operator inputs documented at the top of this file.
+        - Every complete specification source listed by spec-sources.json.
+        - Existing state/spec-index.json, state/item-ledger.json, and
+          state/active-batch.json when present.
+        - Current workspace contents and project policy.
+        - Only the project manifests, configuration, entry points, and bounded source
+          regions needed to identify the project and map requirements.
+
+        ### Files to touch
+        - state/spec-index.json: write a JSON object with schema_revision,
+          specification_fingerprint, source_fingerprints, input_fingerprints,
+          project_anchors[{path,sha256}], items[], impact_set[], generated_at, and
+          status. Each items[] record contains item_id, requirement_id, input_fingerprint,
+          citations[], priority, criticality, acceptance_criteria[], dependencies[],
+          public_interfaces[], discovery_scope[], contract_only_paths[],
+          implementation_only_paths[], shared_paths[{path,from,to,transfer_after}],
+          forbidden_paths[], predecessor_revalidations[], and disposition.
+        - state/item-ledger.json: write schema_revision, specification_fingerprint,
+          items{}, and updated_at. Each items[item_id] contains status, selection_id,
+          durable_pass_count, approval_resume_count, phase_dispositions{},
+          accepted_event_path, accepted_event_sha256, reopen_findings[], and
+          last_updated_at. Preserve records not changed by this preparation.
+        - state/active-batch.json: write schema_revision, batch_id,
+          specification_fingerprint, status, item_limit, item_pass_limit,
+          approval_resume_limit, current_item_id, accepted_item_count,
+          counted_selection_ids[], approval_ids[], issue_ids[], created_at, and
+          updated_at.
+        - .omp-swarm/spec-to-code/run/: remove and recreate only this literal subtree
+          with empty meta/, handoffs/, reports/, signals/, and scratch/ directories.
+        - run/reports/prepare-index.json: write schema_revision, batch_id,
+          specification_fingerprint, input_fingerprints, input_digests{},
+          project_anchors[{path,sha256}], indexed_item_ids[], impact_set[], status
+          (READY or BLOCKED), reason, and generated_at.
+        - run/signals/prepare.control.yaml: write action and reason only. action is
+          continue for READY or fail for BLOCKED; never write target.
+        - run/meta/prepare.json: write last with schema_revision, batch_id,
+          specification_fingerprint, input_fingerprints, input_digests{},
+          project_anchors[{path,sha256}], generated_at, and status matching the report.
+
+        ### Task
+        1. Discover at least one non-DAG project anchor from current workspace contents;
+           verify the workspace with its path and hash before writing.
+        2. Validate all three exact revision-1 input contracts. Require unique source
+           IDs and paths; precedence must list every source ID exactly once, highest
+           first. Enforce item_limit 1..8, item_pass_limit 1..6, and
+           approval_resume_limit 1..3.
+        3. Reject duplicate approval or deviation IDs, incomplete records, unsafe or
+           empty method identifiers, and fingerprints bound to the wrong requirement.
+        4. Build each manifest item with source citations, priority, criticality,
+           acceptance criteria, dependencies, affected public interfaces or bounded
+           discovery scope, contract ownership, implementation ownership, same-item
+           shared/transfer paths, forbidden paths, and its input fingerprint.
+        5. Permit same-item shared paths only because their writers are serialized.
+           Reject cross-item mutable overlap unless an explicit dependency transfers
+           ownership and requires predecessor-criterion revalidation.
+        6. Compare the aggregate specification fingerprint with durable state. Record
+           the impact set on change without erasing unaffected approvals or acceptance
+           history.
+        7. Resolve the literal run path inside the verified workspace. Reject an empty
+           path, '..', symlink escape, variable-derived path, or glob. Remove and
+           recreate only that subtree.
+        8. Resume an open batch without changing its ID, counters, limits, approvals,
+           current item, issue history, or pass budgets. After a closed batch, create a
+           new batch ID and reset accepted_item_count to zero. Requeue an abandoned
+           IN_PROGRESS item without charging a pass merely because this node reran.
+
+        ### Outputs
+        - A complete current manifest and durable queue in state/.
+        - A clean current-run coordination subtree in run/.
+        - READY even when target implementation is absent, or BLOCKED only for
+          malformed or missing authority, unresolved precedence, unsafe workspace,
+          contradictory ownership, or exhausted durable limits.
+        - Exactly one control decision: continue on READY; otherwise fail with a safe,
+          actionable reason.
+
+        ### Rules
+        - Do not assume a language, package manager, manifest name, source directory,
+          test layout, build system, or verification command.
+        - Never inspect or edit runtime-owned .swarm_* paths, unrelated project files,
+          or accepted specification content.
+        - Edit no paths outside the files and preparation subtree listed above.
+        - Preserve unrelated ledger entries and durable evidence.
+        - Replace JSON and YAML files atomically.
+
+        ### Retry and failure
+        - Retry idempotently from durable state after repeating the same bounded run
+          cleanup.
+        - A retry must reproduce the same reconciled state unless current inputs or
+          workspace evidence changed.
+      reports_to: [process_one_item]
+      control:
+        signal: .omp-swarm/spec-to-code/run/signals/prepare.control.yaml
+        allowed_restart_targets: [prepare_index]
+
+    process_one_item:
+      type: graph
+      path: ./graphs/process-one-item.yaml
+      waits_for: [prepare_index]
+      reports_to: [full_project_check]
+      repeat:
+        max_rounds: 8
+        stop_signal: .omp-swarm/spec-to-code/run/signals/process-one-item.txt
+        success_value: BATCH_COMPLETE
+        continue_value: NEXT_ITEM
+
+    full_project_check:
+      type: agent
+      role: Project-native full verification executor
+      workload:
+        profile: general
+        estimated_usage:
+          input_tokens: 30000
+          output_tokens: 6000
+          cache_read_tokens: 12000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Execute the target project's complete established verification gate against the
+        current workspace without mutating project files.
+
+        ### Inputs
+        - Current project policy and root workspace contents.
+        - Only relevant project-owned manifests and configuration.
+        - Current batch metadata and project-anchor hashes from preparation.
+
+        ### Files to touch
+        - run/reports/full-project-check.json: write a JSON object with
+          schema_revision, batch_id, specification_fingerprint,
+          project_anchors[{path,sha256}], discovery_evidence[{path,sha256,finding}],
+          checks[], overall_status, reason, and generated_at. Each checks[] record
+          contains check_id, purpose, command, cwd, applicability (APPLICABLE or
+          NOT_APPLICABLE), applicability_evidence[], exit_code, status (PASS, FAIL, or
+          BLOCKED), and safe_output_summary. overall_status is PASS only when every
+          applicable check is PASS.
+
+        ### Task
+        1. Discover the project's established toolchain and verification commands.
+        2. Prefer one documented read-only full-gate command.
+        3. If no single gate exists, run the smallest established command set that
+           collectively covers every check required by current project policy.
+        4. Mark a check not applicable only when current project evidence proves that.
+        5. Report BLOCKED when a required check has no safe executable command.
+
+        ### Outputs
+        - A current full-project-check report with one overall decision and evidence for
+          every project-required check.
+
+        ### Rules
+        - Do not assume a language, package manager, manifest name, source or test
+          layout, or fixed check categories.
+        - Do not install dependencies, invent commands, generate configuration, rewrite
+          files, or treat a missing tool as success.
+        - Do not mutate project files or any DAG artifact except the owned report.
+
+        ### Retry and failure
+        - Re-discover when relevant project policy or configuration changed.
+        - Otherwise retry by rerunning every applicable check against current files;
+          never trust prior command output.
+      waits_for: [process_one_item]
+      reports_to: [completion_audit]
+
+    completion_audit:
+      type: agent
+      role: Batch completion and recovery controller
+      workload:
+        profile: review
+        estimated_usage:
+          input_tokens: 50000
+          output_tokens: 8000
+          cache_read_tokens: 20000
+          cache_write_tokens: 4000
+      task: |
+        ### Goal
+        Independently accept the current batch, schedule one reachable repair, or fail
+        safely.
+
+        ### Inputs
+        - Current specification sources.
+        - state/spec-index.json, state/item-ledger.json, and state/active-batch.json.
+        - run/meta/prepare.json and run/reports/full-project-check.json.
+        - For every item claimed by this batch, the exact acceptance_event_path recorded
+          in the ledger under
+          state/audit/<batch-id>/<item-id>/<selection-id>.json.
+        - Actual current files in every claimed item's contract, implementation, and
+          transferred shared ownership.
+
+        ### Files to touch
+        - state/item-ledger.json: preserve the existing schema and all unaffected item
+          records. For every reopened item, set status to REOPENED, retain selection and
+          acceptance-event history, and append reopen_findings[{finding_id,evidence,
+          required_mutation,owner,detected_at}].
+        - state/active-batch.json: preserve identifiers, limits, approvals, issues,
+          counted_selection_ids, and accepted_item_count. Set status to exactly
+          CLOSED_NEXT_RUN_REQUIRED, CLOSED_COMPLETE, or OPEN_REPAIR; set current_item_id
+          only for OPEN_REPAIR; update updated_at.
+        - run/reports/completion-audit.json: write schema_revision, batch_id,
+          specification_fingerprint, full_project_check_sha256, claimed_items[],
+          findings[], decision, reopened_item_ids[], pending_item_ids[], reason, and
+          generated_at. Each claimed_items[] record contains item_id, selection_id,
+          acceptance_event_path, acceptance_event_sha256, item_review_sha256,
+          source_hashes_match, predecessor_revalidations[], and status. Each findings[]
+          record contains finding_id, item_id, severity, evidence, required_mutation,
+          owner, and disposition. decision is COMPLETE, NEXT_RUN_REQUIRED,
+          REPAIR_REQUIRED, or BLOCKED.
+        - run/signals/final.control.yaml: write action and reason. For restart, also
+          write target as exactly process_one_item or full_project_check. For continue
+          or fail, omit target.
+
+        ### Task
+        1. Require the full-project report to enumerate every project-required check
+           with current command, applicability evidence, exit status, and overall
+           decision.
+        2. For every claimed item, require exactly one current acceptance event with
+           matching schema revision; batch, selection, item, and input fingerprints;
+           ACCEPTED item-review decision and hash; phase report and control hashes;
+           approved method and observed result; accepted-deviation IDs; changed paths;
+           and source hashes. Match its hash to the ledger.
+        3. Inspect all claimed items, not only the last one. Treat a post-acceptance
+           source-hash change as stale unless a later owning item explicitly revalidated
+           the affected predecessor criteria in its own event.
+        4. Treat ledger and verification settlement as evidence only, never as item
+           acceptance.
+        5. Continue only when full-project verification is PASS, every claimed item has
+           current independently verified ACCEPTED evidence, every cross-item change has
+           predecessor-criterion revalidation, and no blocker remains.
+        6. When pending work remains only because item_limit was reached, set
+           CLOSED_NEXT_RUN_REQUIRED and audit status NEXT_RUN_REQUIRED; do not restart
+           to evade the bound.
+        7. Set CLOSED_COMPLETE and audit status COMPLETE only when no pending or
+           impacted item remains.
+        8. For a source or acceptance-evidence defect, map the required mutation to the
+           declared ownership of every claimed item. Reopen the exact owning item,
+           attach new evidence, set OPEN_REPAIR without changing accepted_item_count,
+           and restart process_one_item.
+
+        ### Outputs
+        - One current completion audit.
+        - One valid control decision.
+        - When repairing, one reopen record per owning item. Combine multiple defects
+          owned by the same item; leave defects owned by other items pending for later
+          child rounds.
+
+        ### Rules
+        - Do not edit project source, specifications, operator inputs, phase reports,
+          acceptance events, or runtime-owned .swarm_* state.
+        - Preserve stable IDs, closed issues, unaffected approvals, acceptance-event
+          references, durable pass counts, and accepted_item_count during repair.
+        - Recheck current source and event hashes instead of trusting stale READY
+          reports.
+        - Replace owned state, report, and control files atomically.
+
+        ### Retry and failure
+        - Restart full_project_check only when its report is missing, malformed, stale,
+          or rerunning can change the failed verification predicate.
+        - Restart process_one_item only after reopening a defect's authorized owning
+          item; that suffix contains all current-item writers and acceptance nodes.
+        - Fail for specification ambiguity, exhausted item or restart limits, a required
+          mutation with no claimed owner, missing approval, malformed or duplicate
+          acceptance evidence, or any finding without a reachable authorized writer.
+        - Never restart for no progress without naming new evidence and the exact
+          artifact that can change.
+      waits_for: [full_project_check]
+      control:
+        signal: .omp-swarm/spec-to-code/run/signals/final.control.yaml
+        allowed_restart_targets: [process_one_item, full_project_check]

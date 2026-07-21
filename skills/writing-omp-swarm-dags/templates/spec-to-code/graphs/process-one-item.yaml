@@ -1,0 +1,243 @@
+# yaml-language-server: $schema=../../../dag.schema.json
+#
+# One repeated round selects one stable requirement item, delegates each independently
+# reviewable phase to a reusable child graph, then commits one durable acceptance event.
+# Parent graph controls provide cross-phase correction without flattening phase internals.
+swarm:
+  name: spec-to-code-process-one-item
+  workspace: /home/katph/personal/omp-cradle
+  mode: parallel
+  target_count: 1
+  model: pi/default
+  concurrency: 3
+  restart_policy:
+    max_restarts: 8
+    max_restarts_per_target: 3
+    max_node_attempts: 4
+  nodes:
+    select_or_resume_item:
+      type: agent
+      role: Single-item selector and interpretation owner
+      workload:
+        profile: planning
+        estimated_usage:
+          input_tokens: 35000
+          output_tokens: 6000
+          cache_read_tokens: 15000
+          cache_write_tokens: 3000
+      task: |
+        ### Goal
+        Claim or resume exactly one stable requirement item for this child round.
+
+        ### Inputs
+        - run/signals/prepare.control.yaml.
+        - state/spec-index.json, state/item-ledger.json, state/active-batch.json, and
+          run/meta/prepare.json.
+        - Complete cited specification sections and dependency dispositions.
+        - Exact revision-1 operator approval and deviation inputs.
+        - state/approval-pauses/<item-id>.json when present.
+        - The latest completion-audit report only when the ledger says it reopened this
+          item.
+
+        ### Files to touch
+        - state/item-ledger.json: preserve the top-level schema and every unrelated item.
+          For the selected items[item_id], write status IN_PROGRESS, selection_id,
+          durable_pass_count, approval_resume_count, phase_dispositions{},
+          reopen_findings[], accepted_event_path, accepted_event_sha256, and
+          last_updated_at.
+        - run/handoffs/current-item.json: write schema_revision, batch_id, selection_id,
+          item_id, requirement_id, specification_fingerprint, input_fingerprint,
+          source_citations[{source_id,path,start_line,end_line,sha256}], normative_text,
+          acceptance_criteria[{criterion_id,text,criticality}], dependencies[],
+          dependency_dispositions{}, criticality, public_interfaces[], discovery_scope[],
+          contract_only_paths[], implementation_only_paths[],
+          shared_paths[{path,from,to,transfer_after}], forbidden_paths[],
+          predecessor_revalidations[], approval_refs[], deviation_refs[],
+          phase_dispositions{}, status (SELECTED, RESUMED, NO_WORK, or BLOCKED), reason,
+          and generated_at.
+        - run/reports/item-selection.json: write schema_revision, batch_id, selection_id,
+          item_id, specification_fingerprint, input_fingerprint, candidate_item_ids[],
+          dependency_evidence[], approval_match{approval_id,matched,reason},
+          pass_count_before, pass_count_after, approval_resume_count_before,
+          approval_resume_count_after, status (SELECTED, RESUMED, NO_WORK, or BLOCKED),
+          reason, and generated_at.
+
+        ### Task
+        1. Require the prepare control to say continue. Match batch ID and specification
+           fingerprint across all durable and preparation inputs.
+        2. Prefer an existing IN_PROGRESS or explicitly reopened item. Otherwise choose
+           the highest-priority dependency-ready pending or impacted item.
+        3. Set NO_WORK only when reconciliation finds no pending, impacted, reopened, or
+           in-progress item.
+        4. Put schema revision; batch, selection, and item IDs and fingerprints; source
+           citations; normative text; acceptance criteria; dependencies; criticality;
+           contract and implementation ownership; same-item shared paths and transfer
+           boundary; forbidden paths; approval references; and phase dispositions in
+           current-item.json.
+        5. Allow same-item path overlap because phase writers are serialized. Reject
+           cross-item mutable overlap unless an explicit dependency transfers ownership
+           and requires predecessor-criterion revalidation.
+        6. Match approval only when requirement_id and spec_fingerprint match, every
+           generated method is allowed, and plan_fingerprint is null or exact.
+        7. When a same-item/spec/plan APPROVAL_REQUIRED pause gains matching approval,
+           increment approval_resume_count without spending an item pass. Otherwise
+           charge every actionable invocation against the durable item-pass limit.
+        8. Retain selection_id when resuming the same item and mark the item IN_PROGRESS.
+
+        ### Outputs
+        - One current-item packet for downstream phase graphs, or an explicit NO_WORK
+          packet.
+        - One current item-selection report.
+        - One reconciled ledger with enforced item-pass and approval-resume limits.
+
+        ### Rules
+        - This node is the sole current writer of the three listed files.
+        - Treat state/active-batch.json and every other durable-state file as read-only.
+        - Do not write project files, specifications, operator inputs, phase artifacts,
+          signals, or runtime-owned .swarm_* paths.
+        - Relinquish ledger ownership to advance_item after selection settles.
+        - Consume only deltas matching batch, item, selection, fingerprints, and target
+          phase.
+        - Replace owned files atomically and preserve unrelated ledger entries and
+          closed findings.
+
+        ### Retry and failure
+        - Retry idempotently from current durable state.
+        - A retry for the same item must preserve selection_id and must not double-charge
+          item or approval-resume budgets.
+      reports_to: [contract_phase]
+
+    contract_phase:
+      type: graph
+      path: ./item-contract.yaml
+      waits_for: [select_or_resume_item]
+      reports_to: [behavior_plan_phase]
+      control:
+        signal: .omp-swarm/spec-to-code/run/signals/contract-phase.control.yaml
+        allowed_restart_targets: [select_or_resume_item, contract_phase]
+
+    behavior_plan_phase:
+      type: graph
+      path: ./item-behavior-plan.yaml
+      waits_for: [contract_phase]
+      reports_to: [red_evidence_phase]
+      control:
+        signal: .omp-swarm/spec-to-code/run/signals/behavior-plan-phase.control.yaml
+        allowed_restart_targets:
+          - select_or_resume_item
+          - contract_phase
+          - behavior_plan_phase
+
+    red_evidence_phase:
+      type: graph
+      path: ./item-red-evidence.yaml
+      waits_for: [behavior_plan_phase]
+      reports_to: [implementation_phase]
+      control:
+        signal: .omp-swarm/spec-to-code/run/signals/red-evidence-phase.control.yaml
+        allowed_restart_targets:
+          - select_or_resume_item
+          - contract_phase
+          - behavior_plan_phase
+          - red_evidence_phase
+
+    implementation_phase:
+      type: graph
+      path: ./item-implementation.yaml
+      waits_for: [red_evidence_phase]
+      reports_to: [advance_item]
+      control:
+        signal: .omp-swarm/spec-to-code/run/signals/implementation-phase.control.yaml
+        allowed_restart_targets:
+          - select_or_resume_item
+          - contract_phase
+          - behavior_plan_phase
+          - red_evidence_phase
+          - implementation_phase
+
+    advance_item:
+      type: agent
+      role: Durable item ledger and repeat-signal owner
+      workload:
+        profile: general
+        estimated_usage:
+          input_tokens: 20000
+          output_tokens: 4000
+          cache_read_tokens: 10000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Merge accepted item evidence, close the selection, update the durable batch
+        counter, and choose the bounded repeat result.
+
+        ### Inputs
+        - run/handoffs/current-item.json.
+        - Every current phase report and all four phase control decisions.
+        - Current hashes for every declared changed file.
+        - state/spec-index.json, state/item-ledger.json, and
+          state/active-batch.json.
+
+        ### Files to touch
+        - state/item-ledger.json: preserve its schema and unrelated records. For
+          items[item_id], write final status, selection_id, phase_dispositions,
+          accepted_event_path, accepted_event_sha256, reopen_findings, and
+          last_updated_at.
+        - state/active-batch.json: preserve batch identifiers and configured limits;
+          write current_item_id, accepted_item_count, counted_selection_ids[], status,
+          and updated_at. Add selection_id to counted_selection_ids and increment the
+          counter only for a newly accepted selection.
+        - state/audit/<batch-id>/<item-id>/<selection-id>.json: write one immutable JSON
+          object with schema_revision, batch_id, selection_id, item_id,
+          specification_fingerprint, input_fingerprint, output_fingerprint, status
+          ACCEPTED, item_review{path,sha256,decision}, phase_reports[{path,sha256}],
+          phase_controls[{path,sha256,action}], approved_method, observed_behavior,
+          accepted_deviation_ids[], changed_files[{path,sha256}],
+          requirement_coverage[{criterion_id,evidence}], predecessor_revalidations[],
+          generated_at, and content_sha256.
+        - run/reports/item-advance.json: write schema_revision, batch_id, selection_id,
+          item_id, validated_hashes[], acceptance_event_path, acceptance_event_sha256,
+          accepted_item_count_before, accepted_item_count_after, counted_now,
+          remaining_dependency_ready_item_ids[], signal, status (ACCEPTED or BLOCKED),
+          reason, and generated_at.
+        - run/signals/process-one-item.txt: write exactly one line containing NEXT_ITEM,
+          BATCH_COMPLETE, or BLOCKED, followed by a newline and no other text.
+
+        ### Task
+        1. After implementation_phase continues, reacquire sole ledger ownership and
+           take sole active-batch ownership until the round settles.
+        2. Match batch, selection, item, input/output, review, phase-control, ownership,
+           and current source hashes before mutation.
+        3. Build the acceptance event with schema revision; batch, selection, and item
+           IDs and fingerprints; ACCEPTED status; item-review decision and hash; every
+           phase report and control hash; approved method and observed behavior;
+           accepted-deviation IDs; exact changed paths and source hashes; requirement
+           coverage; transferred predecessor criteria; generated_at; and content hash.
+        4. Store the event's exact path and hash in the ledger. Identical existing
+           content is success; conflicting content is BLOCKED.
+        5. Mark the item ACCEPTED and increment accepted_item_count exactly once only
+           when all four phase controls continued and end-to-end review passed. Record
+           the counted selection ID.
+        6. Write NEXT_ITEM only when dependency-ready work remains and
+           accepted_item_count is below item_limit. Write BATCH_COMPLETE when no work
+           remains or the limit is reached.
+
+        ### Outputs
+        - One immutable acceptance event for an accepted selection.
+        - Reconciled ledger and active-batch state.
+        - One item-advance report.
+        - One bounded repeat signal.
+
+        ### Rules
+        - Do not edit project source, handoffs, phase reviews, specifications, operator
+          inputs, or runtime-owned .swarm_* paths.
+        - Do not accept or increment on missing, stale, failed, or BLOCKED evidence.
+          Record the blocker and write BLOCKED instead.
+        - Increment accepted_item_count once per selection ID, never once per retry.
+        - Replace mutable owned files atomically; never replace a conflicting immutable
+          acceptance event.
+
+        ### Retry and failure
+        - Retry must reproduce the same event, ledger, counter, report, and signal
+          without double-counting.
+        - Any hash mismatch or conflicting event is BLOCKED with actionable evidence.
+      waits_for: [implementation_phase]

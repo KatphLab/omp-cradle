@@ -1,0 +1,200 @@
+# yaml-language-server: $schema=../../../dag.schema.json
+#
+# Reusable approved missing-behavior reproduction phase for one selected item. The
+# terminal reviewer writes the parent process graph's control decision.
+swarm:
+  name: spec-to-code-item-red-evidence
+  workspace: /home/katph/personal/omp-cradle
+  mode: parallel
+  target_count: 1
+  model: pi/default
+  concurrency: 1
+  nodes:
+    write_red_evidence:
+      type: agent
+      role: Approved missing-behavior reproduction author
+      workload:
+        profile: implementation
+        estimated_usage:
+          input_tokens: 35000
+          output_tokens: 7000
+          cache_read_tokens: 14000
+          cache_write_tokens: 3000
+      task: |
+        ### Goal
+        Create one executable, approved, project-native reproduction of the selected
+        item's observable behavior before implementation.
+
+        ### Inputs
+        - Current-item and accepted contract artifacts and reviews.
+        - Accepted behavior-plan artifacts and review.
+        - Current project policy, relevant project-owned manifests or configuration,
+          and the planned public interfaces.
+        - Exact matching approval.
+        - Matching red-evidence and later item-review deltas.
+
+        ### Files to touch
+        - run/scratch/reproduction/manifest.json: write schema_revision, batch_id,
+          selection_id, item_id, plan_fingerprint, approval_id, method,
+          artifact_paths[], entry_artifact, invocation{program,args[],cwd,env_names[]},
+          expected_missing_result, reached_interface_marker, result_marker,
+          source_hashes{}, and generated_at.
+        - Other files under run/scratch/reproduction/: write only the executable source,
+          fixture, or harness artifacts named by manifest.json. Every artifact must use
+          deterministic inputs, call the planned public interface, emit the declared
+          reached-interface and result markers, and contain no project implementation
+          substitute.
+        - run/reports/red-evidence-implementation.json: write schema_revision, batch_id,
+          selection_id, item_id, input_fingerprint, contract_review_sha256,
+          test_plan_sha256, plan_fingerprint, approval_id, method,
+          discovery_evidence[{path,sha256,finding}], reproduction_manifest_sha256,
+          artifacts[{path,sha256,purpose}], expected_missing_result, status (READY,
+          SKIPPED, or BLOCKED), reason, and generated_at.
+
+        ### Task
+        1. Match all item, contract, plan, approval, and review fingerprints.
+        2. Select the project's established harness, a standalone project-language
+           artifact, or another approved project-native mechanism.
+        3. Exercise the real planned public interface with deterministic inputs.
+        4. Emit machine-interpretable item, selection, reached-interface, and result
+           evidence.
+        5. Distinguish the specified missing behavior from syntax, import, setup,
+           environment, or harness failures.
+        6. On NO_WORK, write a current SKIPPED report and no reproduction.
+
+        ### Outputs
+        - One bounded executable reproduction subtree when work is required.
+        - One current red-evidence implementation report.
+
+        ### Rules
+        - Do not mutate project files or any DAG artifact outside the owned scratch
+          subtree and report.
+        - Do not assume a language, package manager, runtime, test framework, file
+          extension, or command.
+        - Do not inspect source text as evidence, mock the behavior under review, use
+          dynamic evaluation, or construct commands from specification text.
+        - Replace the owned scratch subtree and report atomically.
+
+        ### Retry and failure
+        - Retry idempotently only from matching review evidence.
+        - Missing approval or unsafe, unbounded, or non-executable planning is BLOCKED.
+      reports_to: [check_red_evidence]
+
+    check_red_evidence:
+      type: agent
+      role: Project-native red-evidence executor
+      workload:
+        profile: general
+        estimated_usage:
+          input_tokens: 25000
+          output_tokens: 5000
+          cache_read_tokens: 10000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Execute the exact approved reproduction against current pre-change behavior and
+        record whether it reaches the intended public interface.
+
+        ### Inputs
+        - Current-item and accepted behavior-plan artifacts.
+        - Current red-evidence implementation report and owned reproduction artifacts.
+        - Only project policy and configuration needed to validate the recorded
+          invocation.
+
+        ### Files to touch
+        - run/reports/red-evidence-check.json: write schema_revision, batch_id,
+          selection_id, item_id, input_fingerprint, plan_fingerprint,
+          reproduction_manifest_sha256, artifact_hashes{}, executed_invocation{program,
+          args[],cwd,env_names[]}, reached_interface, reached_interface_evidence,
+          observed_result, result_evidence, exit_code, process_status,
+          safe_output_summary, status (EXECUTED, SKIPPED, or BLOCKED), reason, and
+          generated_at.
+
+        ### Task
+        1. Validate that the recorded invocation is fixed, approved, bounded, and
+           consistent with current project evidence.
+        2. Reject any invocation that escapes the workspace, mutates project files,
+           installs dependencies, composes shell control syntax, or incorporates
+           untrusted specification text.
+        3. Execute the validated procedure without repairing the reproduction or
+           project.
+        4. Capture reached-interface and observed-result evidence separately from
+           process status.
+
+        ### Outputs
+        - One current red-evidence execution report.
+
+        ### Rules
+        - Do not assume a runtime or command.
+        - Do not edit the reproduction, project files, inputs, or any report other than
+          the owned report.
+
+        ### Retry and failure
+        - Retry by executing the same validated procedure against current files.
+        - Report BLOCKED when the procedure is unsafe, stale, malformed, or cannot be
+          executed as approved.
+      waits_for: [write_red_evidence]
+      reports_to: [review_red_evidence]
+
+    review_red_evidence:
+      type: agent
+      role: Independent red-evidence reviewer
+      workload:
+        profile: review
+        estimated_usage:
+          input_tokens: 35000
+          output_tokens: 6500
+          cache_read_tokens: 16000
+          cache_write_tokens: 3000
+      task: |
+        ### Goal
+        Prove the reproduction is intentionally red or already green, request one
+        reachable parent correction, or fail safely.
+
+        ### Inputs
+        - Actual reproduction artifacts and red-evidence execution report.
+        - Current public source and current-item.
+        - Accepted contract and behavior-plan artifacts and reviews.
+        - Exact approval record and matching review deltas.
+
+        ### Files to touch
+        - run/reports/red-evidence-review.json: write schema_revision, batch_id,
+          selection_id, item_id, input_fingerprint, plan_fingerprint, approval_id,
+          implementation_report_sha256, check_report_sha256, artifact_hashes{},
+          decision (EXPECTED_MISSING, ALREADY_SATISFIED, SKIPPED, REJECTED, or BLOCKED),
+          findings[], reason, and generated_at. Each findings[] record contains
+          finding_id, criterion_id, severity, evidence[], required_mutation, owner,
+          acceptance_check, and status.
+        - run/signals/red-evidence-phase.control.yaml: write action and reason. For
+          restart, also write target as exactly select_or_resume_item, contract_phase,
+          behavior_plan_phase, or red_evidence_phase. For continue or fail, omit target.
+
+        ### Task
+        1. Match all IDs, fingerprints, approval, and artifact hashes.
+        2. Accept EXPECTED_MISSING only when execution reached the intended public
+           interface and demonstrated the specified absent or incorrect behavior.
+        3. Accept ALREADY_SATISFIED only when execution reached that interface and
+           proved the planned behavior exists.
+        4. Reject syntax, import, environment, setup, approval, harness, and unrelated
+           failures as red evidence.
+        5. Continue valid NO_WORK as SKIPPED.
+        6. Restart select_or_resume_item for interpretation defects, contract_phase for
+           contract causes, behavior_plan_phase for scenario or approval-plan defects,
+           or red_evidence_phase for reproduction or command-evidence defects.
+
+        ### Outputs
+        - One current red-evidence review.
+        - One valid parent control decision.
+
+        ### Rules
+        - Do not edit inspected artifacts, project source, durable state, operator
+          inputs, specifications, or runtime-owned .swarm_* paths.
+        - Every correction must name the changing artifact and its reachable owner.
+        - Replace the report and control file atomically.
+
+        ### Retry and failure
+        - Fail for missing authority or approval, forbidden work, no reachable mutation,
+          no progress, or exhausted limits.
+        - Never continue based only on process exit status; require observable behavior
+          evidence.
+      waits_for: [check_red_evidence]
