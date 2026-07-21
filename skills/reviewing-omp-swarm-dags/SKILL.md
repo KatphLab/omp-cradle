@@ -9,7 +9,7 @@ description: Use when auditing, approving, or debugging an OMP swarm YAML DAG, e
 
 `Validation: ok` is necessary, not approval. Prove workspace mutations, correction ownership, failure propagation, and terminal acceptance.
 
-**REQUIRED SUB-SKILL:** Use `writing-omp-swarm-dags`; read its always-required references and every route matching the root and imported graphs.
+**REQUIRED SUB-SKILL:** Use `writing-omp-swarm-dags`; also use `writing-omp-spec-to-code-dags` when the workflow processes durable requirement items. Read every routed reference matching the root and imported graphs.
 
 ## Evidence First
 

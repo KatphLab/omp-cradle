@@ -1,10 +1,10 @@
 # Model Routing
 
-Read this complete file whenever a DAG declares `swarm.model_routing` or an agent `workload`.
+Read this complete file for every DAG containing agents.
 
-## Opt-in contract
+## Opt-in Runtime Contract
 
-Cost-aware routing is opt-in. DAGs without root `model_routing.enabled: true` retain their existing model-selector, inheritance, execution, and restart behavior. Routed DAGs are planned recursively before workspace/state initialization or agent execution; there is no routing agent in the DAG.
+Routing is runtime-opt-in through root `model_routing.enabled: true`; the authoring skill enables it by default unless the user explicitly requires fixed models. A DAG without the policy retains legacy selector, inheritance, execution, and restart behavior. Routed DAGs are planned recursively before workspace/state initialization or agent execution; there is no routing agent in the graph.
 
 ```yaml
 swarm:

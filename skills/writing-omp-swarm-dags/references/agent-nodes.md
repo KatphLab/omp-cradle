@@ -38,23 +38,19 @@ Agents are independent invocations. They share current filesystem state, not hid
 
 ## Task Contract
 
-Write `task` in this order:
+Every `task` uses these headings in this exact order:
 
-1. **Outcome:** one coherent project behavior, decision, or deliverable.
-2. **Inspect:** exact project paths when known; otherwise a bounded discovery scope and the plan/manifest to produce.
-3. **Read:** upstream project state and exact DAG-owned handoffs or reports.
-4. **Edit:** owned project files or the upstream ownership manifest that defines them.
-5. **Do not edit:** unrelated modules, sibling-owned paths, runtime `.swarm_*`, and other user work.
-6. **Verify:** focused observable behavior or project command.
-7. **Report/control:** exact evidence and signal paths required by consumers.
-8. **Retry/failure:** behavior when files are already modified, inputs are missing, or verification fails.
+1. `### Goal`: one coherent behavior, decision, or deliverable.
+2. `### Inputs`: exact upstream artifacts and project paths; when paths are unknown, a bounded discovery scope and required ownership manifest.
+3. `### Files to touch`: every mutable project and DAG-owned path, the allowed change or schema, and any ownership transfer.
+4. `### Task`: ordered actions, verification decisions, and current-source/review-delta reconciliation.
+5. `### Outputs`: observable result, evidence, status, and control decision.
+6. `### Rules`: forbidden paths, authority, independence, and non-assumptions.
+7. `### Retry and failure`: idempotence, stale or missing input handling, blockers, and bounded failure.
 
-Do not force exact source filenames before investigation can know them. Instead, give one investigation node a bounded project scope and have it write the exact path/ownership plan consumed by the implementer.
+Do not force exact filenames before investigation can know them. Give one investigation node a bounded project scope; it writes the exact ownership manifest before any project modifier runs.
 
-Status belongs to the node's own objective. A discovery node that completely
-identifies absent or defective target implementation is READY with gaps to
-implement. It is BLOCKED only when unavailable/malformed authority, an unresolved
-contradiction, or another missing prerequisite prevents completing the discovery.
+Status is relative to the producing node's objective. A discovery node that completely identifies absent or defective target implementation is READY with gaps to implement. It is BLOCKED only when unavailable or malformed authority, unresolved contradiction, or another missing prerequisite prevents complete discovery.
 
 ## Choosing Agent Boundaries
 
@@ -75,17 +71,13 @@ A modifying agent may coherently own production source, directly coupled tests, 
 Reviewers inspect the actual project tree and focused check evidence. A read-only reviewer may:
 
 - Accept and write `action: continue` through control.
-- Reject with concrete findings and restart the upstream implementer.
+- Reject with findings that state evidence, required mutation, current owner, and acceptance check.
 - Fail when safe completion is impossible.
 
-Every restartable finding must name the required mutation and an authorized
-owner in the selected target's invalidated suffix. Inspecting or recovering an
-upstream handoff does not grant permission to rewrite it. A reviewer must not
-turn a merely inspected historical handoff into a new READY acceptance gate. If
-the required owner is unreachable, reject or supersede a stale non-authoritative
-finding, select a reachable allowed target, or fail; never restart an incapable
-node.
+Route the restart by the required mutation, not by convenience. A source defect targets the source owner; a plan, report, ledger, status, or control defect targets that artifact's current writer. The invalidated suffix must also contain every downstream node that must regenerate evidence.
 
-On restart, the implementer sees its existing edits; no filesystem rollback occurs. Its task must read the review report, inspect current source, and repair idempotently. A reviewer must not claim independence after modifying the source it approves.
+Inspecting or recovering a handoff does not grant permission to rewrite it. A reviewer never asks an implementer to update the review report, control signal, sibling report, or frozen status file. If the actual writer is unreachable, acceptance must use newer authoritative evidence or the reviewer must fail.
+
+On restart, source files and reports are not rolled back. Each requeued writer reads current files and matching review deltas, repairs only its ownership, and atomically replaces its own evidence. A reviewer cannot claim independence after modifying the source it approves.
 
 Ordinary source changes need no publisher agent. Add a terminal publisher only for a generated or single replaceable artifact that genuinely requires staged atomic promotion.

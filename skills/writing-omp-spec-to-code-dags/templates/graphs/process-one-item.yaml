@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../../../dag.schema.json
+# yaml-language-server: $schema=../../../../src/swarm/dag.schema.json
 #
 # One repeated round selects one stable requirement item, delegates each independently
 # reviewable phase to a reusable child graph, then commits one durable acceptance event.

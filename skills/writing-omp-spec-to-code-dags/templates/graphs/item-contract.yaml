@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../../../dag.schema.json
+# yaml-language-server: $schema=../../../../src/swarm/dag.schema.json
 #
 # Reusable contract phase for one selected specification item. The terminal reviewer
 # writes the parent process graph's control decision.

@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../../../dag.schema.json
+# yaml-language-server: $schema=../../../../src/swarm/dag.schema.json
 #
 # Reusable approved real-behavior planning phase for one selected item. The terminal
 # reviewer writes the parent process graph's control decision.
