@@ -10,7 +10,7 @@ DAG-owned files coordinate independent nodes:
 
 ```text
 <project-workspace>/
-├── .swarm_<name>/                          # runtime-owned; never touch
+├── .swarm_<name>/                          # runtime-owned; DAG nodes never touch
 ├── .omp-swarm/
 │   └── <swarm-name>/
 │       ├── run/                            # current normal run
@@ -25,7 +25,13 @@ DAG-owned files coordinate independent nodes:
 └── package.json                            # real project input
 ```
 
-Use the literal `swarm.name` in the DAG-owned path. Runtime `.swarm_<name>/` and imported-child `.swarm_*` directories are owned by OMP; agents and Bash must not read, move, clean, or delete them.
+Use the literal `swarm.name` in the DAG-owned path. Runtime `.swarm_<name>/` and imported-child `.swarm_*` directories are owned by OMP; swarm agents and Bash nodes must not read, edit, move, clean, or delete them.
+
+An explicit user request to inspect or edit runtime state authorizes the coding
+assistant to perform that operator-directed recovery outside a swarm run. Never
+infer this authorization from a request to restart, debug, or repair a DAG.
+Before editing, verify that no swarm process is running, preserve the state
+schema and definition fingerprint, and update mirrored state files consistently.
 
 ## File Contracts
 

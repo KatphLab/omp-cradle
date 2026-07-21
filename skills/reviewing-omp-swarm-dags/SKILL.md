@@ -24,8 +24,9 @@ If unavailable, say `Not run`.
 
 3. Resolve `swarm.workspace` from the root YAML directory. Verify project anchors and inspect only named project paths needed to check task, command, and ownership claims.
    If current-run DAG artifacts exist, inspect the exact handoffs, reports, and
-   control signals needed to test status and ownership claims; never inspect
-   runtime-owned `.swarm_*`.
+   control signals needed to test status and ownership claims. Do not inspect
+   runtime-owned `.swarm_*` unless the user explicitly requests runtime-state
+   inspection or editing.
 4. Do not execute or edit the DAG unless requested. Mark unproved claims `[INFERENCE]`.
 
 ## Critical Review Order
