@@ -1,391 +1,467 @@
 # yaml-language-server: $schema=../../../src/swarm/dag.schema.json
 #
-# Reusable, resumable specification-to-code workflow.
-#
-# Required operator-owned input contracts (never rewritten by this DAG):
-#   .omp-swarm/spec-to-code/input/spec-sources.json
-#     {"schema_revision":1,
-#      "sources":[{"id":"primary","path":"path/to/spec.md"}],
-#      "precedence":["primary"],"item_limit":8,"item_pass_limit":6,
-#      "approval_resume_limit":3}
-#     Source IDs are unique. precedence lists every source ID exactly once, highest first.
-#   .omp-swarm/spec-to-code/input/test-approval.json
-#     {"schema_revision":1,
-#      "approvals":[{"approval_id":"TA-1","requirement_id":"REQ-1",
-#      "spec_fingerprint":"sha256:...","plan_fingerprint":null,
-#      "allowed_methods":["project-native-reproduction"]}]}
-#     approvals may be empty. A null plan_fingerprint pre-approves only generated plans
-#     whose methods are a subset of allowed_methods; a non-null value must exactly match.
-#   .omp-swarm/spec-to-code/input/accepted-deviations.json
-#     {"schema_revision":1,
-#      "deviations":[{"deviation_id":"DEV-1","requirement_id":"REQ-1",
-#      "spec_fingerprint":"sha256:...","rationale":"...","risk":"...",
-#      "evidence":"...","revisit_condition":"..."}]}
-#     deviations may be empty. Every non-empty string and fingerprint is required.
-#
-# Durable state contract:
-#   prepare_index initially owns .omp-swarm/spec-to-code/state/spec-index.json,
-#   .omp-swarm/spec-to-code/state/item-ledger.json, and
-#   .omp-swarm/spec-to-code/state/active-batch.json. process_one_item transfers ledger
-#   ownership serially from
-#   select_or_resume_item to advance_item and transfers active-batch ownership to
-#   advance_item once per item. completion_audit owns both after the repeated graph
-#   settles. The next normal/resumed run transfers both back to prepare_index.
-#   .omp-swarm/spec-to-code/state/audit contains immutable-by-selection acceptance
-#   evidence. No node reads or
-#   edits runtime-owned .swarm_* state.
-#
-# Every execution of prepare_index safely rebuilds the DAG-owned
-# .omp-swarm/spec-to-code/run/ subtree from
-# durable state before downstream work. One child round handles one stable requirement
-# item. Eight rounds form one bounded batch; another normal run resumes the durable
-# cursor. Control rewinds and durable item/approval limits bound all retry paths.
+# Lean, gated specification-to-code workflow.
+# Before running:
+#   1. Point workspace at the existing project root.
+#   2. Replace PROJECT_ANCHOR in the plan task with an exact project file.
+#   3. Put the bounded specification at
+#      .omp-swarm/spec-to-code/input/spec.md, or replace that path consistently.
+#   4. If you rename the swarm, replace every .omp-swarm/spec-to-code/ path.
 swarm:
   name: spec-to-code
-  workspace: /home/katph/personal/omp-cradle
+  workspace: ../../..
   mode: parallel
   target_count: 1
+  concurrency: 1
   model: pi/default
-  concurrency: 4
   model_routing:
     enabled: true
-    allowed_aliases:
-      - pi/smol
-      - pi/task
-      - pi/default
-      - pi/slow
-      - pi/plan
-      - pi/advisor
+    allowed_aliases: [pi/task, pi/default, pi/slow, pi/plan, pi/advisor]
     minimum_quality: standard
-    max_estimated_cost_usd: 1000
-    # Accept authenticated catalog zeroes as bundled/local zero-marginal-cost access.
+    max_estimated_cost_usd: 150
     allow_zero_marginal_cost: true
     default_usage:
       input_tokens: 20000
       output_tokens: 4000
       cache_read_tokens: 5000
-      cache_write_tokens: 2000
+      cache_write_tokens: 1000
   restart_policy:
-    max_restarts: 5
-    max_restarts_per_target: 10
-    max_node_attempts: 10
+    max_restarts: 4
+    max_restarts_per_target: 2
+    max_node_attempts: 3
   nodes:
-    prepare_index:
+    plan:
       type: agent
-      role: Specification workspace guard and manifest owner
+      role: Specification and test-plan author
       workload:
         profile: planning
         estimated_usage:
-          input_tokens: 80000
-          output_tokens: 12000
-          cache_read_tokens: 30000
-          cache_write_tokens: 8000
-      task: |
-        ### Goal
-        Create or resume a fingerprinted requirement manifest and a bounded work queue
-        for the existing project.
-
-        ### Inputs
-        - .omp-swarm/spec-to-code/input/spec-sources.json with exactly revision-1
-          fields schema_revision, sources[{id,path}], precedence[], item_limit,
-          item_pass_limit, and approval_resume_limit. Source IDs and paths are non-empty
-          and unique; precedence contains every source ID exactly once, highest first;
-          limits are respectively 1..8, 1..6, and 1..3.
-        - Every complete specification source named by that validated input.
-        - .omp-swarm/spec-to-code/input/test-approval.json with exactly revision-1
-          fields schema_revision and approvals[{approval_id,requirement_id,
-          spec_fingerprint,plan_fingerprint,allowed_methods[]}]. IDs are unique and
-          non-empty; fingerprints and methods are safe and non-empty; plan_fingerprint
-          is null or exact.
-        - .omp-swarm/spec-to-code/input/accepted-deviations.json with exactly revision-1
-          fields schema_revision and deviations[{deviation_id,requirement_id,
-          spec_fingerprint,rationale,risk,evidence,revisit_condition}]. IDs are unique
-          and every record field is non-empty.
-        - Existing .omp-swarm/spec-to-code/state/spec-index.json,
-          .omp-swarm/spec-to-code/state/item-ledger.json, and
-          .omp-swarm/spec-to-code/state/active-batch.json when present.
-        - Current workspace contents and project policy.
-        - Only the project manifests, configuration, entry points, and bounded source
-          regions needed to identify the project and map requirements.
-
-        ### Files to touch
-        - .omp-swarm/spec-to-code/state/spec-index.json: write a JSON object with
-          schema_revision,
-          specification_fingerprint, source_fingerprints, input_fingerprints,
-          project_anchors[{path,sha256}], items[], impact_set[], generated_at, and
-          status. Each items[] record contains item_id, requirement_id, input_fingerprint,
-          citations[], priority, criticality, acceptance_criteria[], dependencies[],
-          public_interfaces[], discovery_scope[], contract_only_paths[],
-          implementation_only_paths[], shared_paths[{path,from,to,transfer_after}],
-          forbidden_paths[], predecessor_revalidations[], and disposition.
-        - .omp-swarm/spec-to-code/state/item-ledger.json: write schema_revision,
-          specification_fingerprint,
-          items{}, and updated_at. Each items[item_id] contains status, selection_id,
-          supersedes_selection_id, repair_counted, durable_pass_count,
-          approval_resume_count, phase_dispositions{}, accepted_event_path,
-          accepted_event_sha256, acceptance_event_history[{selection_id,event_path,
-          event_sha256,superseded_by_selection_id,counted,archived_at}],
-          reopen_findings[], and last_updated_at. Preserve records not changed by this
-          preparation.
-        - .omp-swarm/spec-to-code/state/active-batch.json: write schema_revision,
-          batch_id,
-          specification_fingerprint, status, item_limit, item_pass_limit,
-          approval_resume_limit, current_item_id, accepted_item_count,
-          counted_selection_ids[], approval_ids[], issue_ids[], created_at, and
-          updated_at.
-        - .omp-swarm/spec-to-code/run/: remove and recreate only this literal subtree
-          with empty meta/, handoffs/, reports/, signals/, and scratch/ directories.
-        - .omp-swarm/spec-to-code/run/reports/prepare-index.json: write schema_revision,
-          batch_id,
-          specification_fingerprint, input_fingerprints, input_digests{},
-          project_anchors[{path,sha256}], indexed_item_ids[], impact_set[], status
-          (READY or BLOCKED), reason, and generated_at.
-        - .omp-swarm/spec-to-code/run/signals/prepare.control.yaml: write action and
-          reason only. action is
-          continue for READY or fail for BLOCKED; never write target.
-        - .omp-swarm/spec-to-code/run/meta/prepare.json: write last with schema_revision,
-          batch_id,
-          specification_fingerprint, input_fingerprints, input_digests{},
-          project_anchors[{path,sha256}], generated_at, and status matching the report.
-
-        ### Task
-        1. Discover at least one non-DAG project anchor from current workspace contents;
-           verify the workspace with its path and hash before writing.
-        2. Validate all three exact revision-1 input contracts. Require unique source
-           IDs and paths; precedence must list every source ID exactly once, highest
-           first. Enforce item_limit 1..8, item_pass_limit 1..6, and
-           approval_resume_limit 1..3.
-        3. Reject duplicate approval or deviation IDs, incomplete records, unsafe or
-           empty method identifiers, and fingerprints bound to the wrong requirement.
-        4. Build each manifest item with source citations, priority, criticality,
-           acceptance criteria, dependencies, affected public interfaces or bounded
-           discovery scope, contract ownership, implementation ownership, same-item
-           shared/transfer paths, forbidden paths, and its input fingerprint.
-        5. Permit same-item shared paths only because their writers are serialized.
-           Reject cross-item mutable overlap unless an explicit dependency transfers
-           ownership and requires predecessor-criterion revalidation.
-        6. Compare the aggregate specification fingerprint with durable state. Record
-           the impact set on change without erasing unaffected approvals or acceptance
-           history.
-        7. Resolve the literal run path inside the verified workspace. Reject an empty
-           path, '..', symlink escape, variable-derived path, or glob. Remove and
-           recreate only that subtree.
-        8. Resume an open batch without changing its ID, counters, limits, approvals,
-           current item, issue history, or pass budgets. After a closed batch, create a
-           new batch ID and reset accepted_item_count to zero. Requeue an abandoned
-           IN_PROGRESS item without charging a pass merely because this node reran.
-
-        ### Outputs
-        - A complete current manifest and durable queue in
-          .omp-swarm/spec-to-code/state/.
-        - A clean current-run coordination subtree in .omp-swarm/spec-to-code/run/.
-        - READY even when target implementation is absent, or BLOCKED only for
-          malformed or missing authority, unresolved precedence, unsafe workspace,
-          contradictory ownership, or exhausted durable limits.
-        - Exactly one control decision: continue on READY; otherwise fail with a safe,
-          actionable reason.
-
-        ### Rules
-        - Do not assume a language, package manager, manifest name, source directory,
-          test layout, build system, or verification command.
-        - Never inspect or edit runtime-owned .swarm_* paths, unrelated project files,
-          or accepted specification content.
-        - Edit no paths outside the files and preparation subtree listed above.
-        - Preserve unrelated ledger entries and durable evidence.
-        - Replace JSON and YAML files atomically.
-
-        ### Retry and failure
-        - Retry idempotently from durable state after repeating the same bounded run
-          cleanup.
-        - A retry must reproduce the same reconciled state unless current inputs or
-          workspace evidence changed.
-      reports_to: [process_one_item]
-      control:
-        signal: .omp-swarm/spec-to-code/run/signals/prepare.control.yaml
-        allowed_restart_targets: [prepare_index]
-
-    process_one_item:
-      type: graph
-      path: ./graphs/process-one-item.yaml
-      waits_for: [prepare_index]
-      reports_to: [full_project_check]
-      repeat:
-        max_rounds: 8
-        stop_signal: .omp-swarm/spec-to-code/run/signals/process-one-item.txt
-        success_value: BATCH_COMPLETE
-        continue_value: NEXT_ITEM
-
-    full_project_check:
-      type: agent
-      role: Project-native full verification executor
-      workload:
-        profile: general
-        estimated_usage:
-          input_tokens: 30000
-          output_tokens: 6000
+          input_tokens: 45000
+          output_tokens: 8000
           cache_read_tokens: 12000
           cache_write_tokens: 2000
       task: |
         ### Goal
-        Execute the target project's complete established verification gate against the
-        current workspace without mutating project files.
+        Map the bounded specification to exact observable contracts, approved RED-test
+        scenarios, source ownership, and project-native commands.
 
         ### Inputs
-        - Current project policy and root workspace contents.
-        - Only relevant project-owned manifests and configuration.
-        - Current batch metadata and project-anchor hashes from preparation.
+        - `PROJECT_ANCHOR` (replace this placeholder before running).
+        - `.omp-swarm/spec-to-code/input/spec.md`, which is operator-owned and read-only.
+        - Current project policy, manifests, configuration, public entry points, and the
+          bounded source and test areas needed to plan the change.
+        - Current `design-review.md` or `red-review.md` findings when this node is
+          restarted.
 
         ### Files to touch
-        - .omp-swarm/spec-to-code/run/reports/full-project-check.json: write a JSON
-          object with
-          schema_revision, batch_id, specification_fingerprint,
-          project_anchors[{path,sha256}], discovery_evidence[{path,sha256,finding}],
-          checks[], overall_status, reason, and generated_at. Each checks[] record
-          contains check_id, purpose, command, cwd, applicability (APPLICABLE or
-          NOT_APPLICABLE), applicability_evidence[], exit_code, status (PASS, FAIL, or
-          BLOCKED), and safe_output_summary. overall_status is PASS only when every
-          applicable check is PASS.
+        - Remove and recreate only the literal `.omp-swarm/spec-to-code/run/` subtree.
+        - Write `.omp-swarm/spec-to-code/run/plan.md` with status (`READY` or `BLOCKED`),
+          specification and anchor SHA-256, requirement matrix, test paths,
+          implementation paths, ordered work, targeted checks, and full project gate.
+        - Each requirement row contains stable ID, exact citation, observable acceptance,
+          planned public boundary, realistic input, exact expected result, plausible bug,
+          test path, implementation paths, and check IDs.
+        - Each check is fixed `{program, args, cwd, env, purpose, executors,
+          mutable_outputs[{path,disposition}]}` data derived from project policy, never a
+          shell command copied from specification prose. Executors are an ordered,
+          non-empty subset of `red`, `review_red`, `implement`, and `review`;
+          disposition is `PRESERVE` or `REMOVE_AFTER_RUN`.
 
         ### Task
-        1. Discover the project's established toolchain and verification commands.
-        2. Prefer one documented read-only full-gate command.
-        3. If no single gate exists, run the smallest established command set that
-           collectively covers every check required by current project policy.
-        4. Mark a check not applicable only when current project evidence proves that.
-        5. Report BLOCKED when a required check has no safe executable command.
+        1. Read applicable prior findings, then verify the exact project anchor and
+           specification before cleaning current-run artifacts.
+        2. Resolve the literal run path inside the workspace. Reject empty paths, `..`,
+           globs, and symlink escape; recreate only that subtree.
+        3. Map every normative requirement to one or more observable behaviors. Include
+           success, boundary, error, precedence, and side-effect cases when specified.
+        4. For every planned test, name the public API call, exact assertion, and a
+           plausible wrong implementation that must fail it. Do not plan existence,
+           import-only, framework, fixture, broad-mock, or placeholder tests.
+        5. Assign exact test paths to `red` and exact production/configuration/docs paths
+           to `implement`. The sets are disjoint and include every required mutation.
+        6. Discover the smallest targeted RED command and established full project gate
+           from current project policy and tooling. Declare every path each command may
+           write. Ownership transfers serially between its listed executors; each
+           executor applies the declared disposition before settlement.
+        7. Reject commands with unbounded or unknown writes. Review executors may write
+           only bounded scratch, cache, or diagnostic outputs, never project deliverables.
+        8. Write `BLOCKED` for ambiguity, missing authority, unsafe workspace, ownership
+           overlap, unavailable checks, unsafe command outputs, or scope too broad for
+           one implementation owner; otherwise write `READY`.
 
         ### Outputs
-        - A current full-project-check report with one overall decision and evidence for
-          every project-required check.
+        One complete test and implementation plan covering every normative requirement,
+        or one actionable blocker. Missing target behavior is planned work, not a blocker.
 
         ### Rules
-        - Do not assume a language, package manager, manifest name, source or test
-          layout, or fixed check categories.
-        - Do not install dependencies, invent commands, generate configuration, rewrite
-          files, or treat a missing tool as success.
-        - Do not mutate project files or any DAG artifact except the owned report.
+        Do not edit project files, the specification, `.swarm_*`, cache, history, or any
+        path outside the current-run subtree. Preserve unrelated user work.
 
         ### Retry and failure
-        - Re-discover when relevant project policy or configuration changed.
-        - Otherwise retry by rerunning every applicable check against current files;
-          never trust prior command output.
-      waits_for: [process_one_item]
-      reports_to: [completion_audit]
+        Rerun idempotently from current authority and source. Read findings before run
+        cleanup, correct the cited planning defect, and never assume source rollback.
 
-    completion_audit:
+    contract:
       type: agent
-      role: Batch completion and recovery controller
+      role: Observable contract designer
+      workload:
+        profile: planning
+        estimated_usage:
+          input_tokens: 35000
+          output_tokens: 6000
+          cache_read_tokens: 10000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Freeze the smallest public contract that makes every planned behavior precise
+        before tests or production implementation begin.
+
+        ### Inputs
+        - `.omp-swarm/spec-to-code/input/spec.md`.
+        - A `READY` `.omp-swarm/spec-to-code/run/plan.md` matching the specification.
+        - Existing public interfaces and conventions in the plan's bounded project scope.
+        - Current `design-review.md` or `red-review.md` findings when this node is
+          restarted.
+
+        ### Files to touch
+        - Write `.omp-swarm/spec-to-code/run/contract.md` with status (`READY` or
+          `BLOCKED`), plan and specification SHA-256, and one contract record per
+          requirement: public boundary and signature, input/output types, validation,
+          defaults and precedence, exact errors, state changes or emitted events,
+          invariants, compatibility constraints, and rationale.
+
+        ### Task
+        1. Require a current `READY` plan covering every normative requirement.
+        2. Reuse an existing public boundary when it cleanly expresses the specified
+           behavior. Otherwise define the smallest boundary in project vocabulary.
+        3. Resolve every test-visible type, error, default, ordering rule, side effect,
+           and compatibility condition. Do not prescribe private implementation details.
+        4. Reconcile applicable review findings and write `BLOCKED` rather than inventing
+           behavior when specification authority is ambiguous.
+
+        ### Outputs
+        One precise observable contract suitable for RED tests, or one actionable blocker.
+
+        ### Rules
+        Do not edit project source, test files, the plan, specification, review artifacts,
+        or `.swarm_*`. Do not add production stubs or placeholder implementations.
+
+        ### Retry and failure
+        Replace only `contract.md`. Preserve stable requirement IDs and correct contract
+        decisions; correct only findings owned by `contract`.
+      waits_for: [plan]
+
+    review_design:
+      type: agent
+      role: Independent test-plan and contract reviewer
+      workload:
+        profile: review
+        estimated_usage:
+          input_tokens: 40000
+          output_tokens: 7000
+          cache_read_tokens: 12000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Approve a complete, executable test plan and observable contract before any RED
+        test or production code is written.
+
+        ### Inputs
+        - The specification, current `plan.md`, current `contract.md`, project policy,
+          and the actual bounded project files named by the plan.
+
+        ### Files to touch
+        - Write `.omp-swarm/spec-to-code/run/design-review.md` with specification, plan,
+          and contract SHA-256; per-requirement results; findings; decision (`ACCEPTED`,
+          `REJECTED`, or `BLOCKED`); and reason. Each finding names evidence, required
+          mutation, current owner, and acceptance check.
+        - Write `.omp-swarm/spec-to-code/run/design-review.control.yaml` using exact OMP
+          control grammar.
+
+        ### Task
+        1. Review every normative requirement against its citation, acceptance behavior,
+           test scenario, plausible bug, ownership, checks, and contract.
+        2. Reject vague assertions, missing error or boundary behavior, tests that can
+           pass without implementation, mocked units under test, ownership overlap,
+           unsafe commands, executors outside `red`, `review_red`, `implement`, and
+           `review`, unbounded or undeclared command outputs, and contracts that expose
+           private structure.
+        3. Restart `plan` for requirement coverage, path, test-plan, or command defects.
+           Restart `contract` for public API, error, invariant, default, precedence, or
+           compatibility defects.
+        4. Continue only when RED tests can be written directly from accepted records.
+           Fail for unresolved specification authority or unreachable correction.
+
+        ### Outputs
+        One independent design review and exactly one control decision: continue for
+        `ACCEPTED`, restart `plan` or `contract` for correctable rejection, or fail for
+        `BLOCKED`.
+
+        ### Rules
+        Do not edit project files, specification, plan, contract, or `.swarm_*`. Review
+        actual project conventions, not summaries alone.
+
+        ### Retry and failure
+        Recompute from current files and hashes. Never restart without an exact defect,
+        owner, required mutation, and acceptance check.
+      waits_for: [contract]
+      control:
+        signal: .omp-swarm/spec-to-code/run/design-review.control.yaml
+        allowed_restart_targets: [plan, contract]
+
+    red:
+      type: agent
+      role: Executable RED-test author
+      workload:
+        profile: implementation
+        estimated_usage:
+          input_tokens: 45000
+          output_tokens: 9000
+          cache_read_tokens: 12000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Turn every accepted behavior into an executable test that calls the planned
+        public boundary, asserts an exact result, and proves the expected pre-change gap.
+
+        ### Inputs
+        - The specification, current `plan.md`, `contract.md`, and accepted
+          `design-review.md` plus its continued control signal.
+        - Current test conventions and exact test paths owned by `red`.
+        - Current `red-review.md` findings when this node is restarted.
+
+        ### Files to touch
+        - Edit only exact test paths assigned to `red` by the accepted plan.
+        - During command execution, write only mutable-output paths assigned to `red`;
+          apply each output's `PRESERVE` or `REMOVE_AFTER_RUN` disposition.
+        - Write `.omp-swarm/spec-to-code/run/red.md` with design-review, plan, contract,
+          specification, test-file, and preserved command-output SHA-256; per-test
+          requirement ID, public call, assertion, command result, observed failure,
+          expected failure, status (`EXPECTED_RED`, `ALREADY_SATISFIED`, or `BLOCKED`),
+          and reason.
+
+        ### Task
+        1. Require hash-matched accepted design evidence before touching tests.
+        2. Write the smallest meaningful tests. Import the planned API at module scope,
+           use realistic inputs, call it directly, and assert exact output, error code,
+           state, event, serialized payload, or visible result.
+        3. Never mock the unit under test or hide missing APIs with dynamic imports,
+           fallbacks, TODOs, generic assertions, or snapshot-only checks.
+        4. Run only accepted targeted RED commands that list `red` as an executor.
+           Verify their actual writes remain inside declared mutable outputs and apply
+           each disposition. Classify missing approved module or symbol as expected RED;
+           reject infrastructure, syntax, fixture, unrelated, or ambiguous failures.
+        5. Record `ALREADY_SATISFIED` only when exact behavior already passes and name the
+           plausible product defect that would make the test fail.
+
+        ### Outputs
+        Executable behavior tests and complete pre-implementation evidence for every
+        planned test, or one actionable blocker.
+
+        ### Rules
+        Do not edit production, configuration, documentation, specification, plan,
+        contract, review artifacts, control signals, `.swarm_*`, or command outputs not
+        explicitly assigned to `red`.
+
+        ### Retry and failure
+        Before implementation, rerun idempotently from accepted design and current tests.
+        Correct only test or RED-evidence findings owned by `red`.
+      waits_for: [review_design]
+
+    review_red:
+      type: agent
+      role: Independent RED-test reviewer
+      workload:
+        profile: review
+        estimated_usage:
+          input_tokens: 40000
+          output_tokens: 7000
+          cache_read_tokens: 12000
+          cache_write_tokens: 2000
+      task: |
+        ### Goal
+        Prove the tests are executable specifications and fail for the intended missing
+        behavior before production implementation begins.
+
+        ### Inputs
+        - The specification, accepted `plan.md`, `contract.md`, `design-review.md`,
+          actual test files, and `red.md`.
+        - Current production boundaries needed to classify observed failures.
+
+        ### Files to touch
+        - During command execution, write only mutable-output paths assigned to
+          `review_red`; apply each declared disposition. These outputs must not be
+          project deliverables.
+        - Write `.omp-swarm/spec-to-code/run/red-review.md` with all upstream, test, and
+          preserved command-output SHA-256; per-test requirement, public call, assertion,
+          plausible bug, rerun result, failure classification, findings, decision
+          (`ACCEPTED`, `REJECTED`, or `BLOCKED`), and reason.
+        - Write `.omp-swarm/spec-to-code/run/red-review.control.yaml` using exact OMP
+          control grammar.
+
+        ### Task
+        1. Inspect every actual test and rerun every accepted RED command that lists
+           `review_red` as an executor before any production writer is scheduled. Verify
+           actual writes stay within declared outputs and apply their dispositions.
+        2. Require each test to call the approved public API and assert concrete product
+           behavior. Confirm it fails for the expected reason or is demonstrably already
+           satisfied and would fail for a named plausible defect.
+        3. Reject existence checks, broad mocks, framework tests, fixture assertions,
+           weak assertions, hidden imports, incidental snapshots, and unexpected failures.
+        4. Restart `red` for test-code or evidence defects, `contract` for public-boundary
+           defects, or `plan` for behavior coverage or test-plan defects.
+        5. Continue only with complete hash-matched RED evidence. Fail for missing
+           authority or unreachable correction.
+
+        ### Outputs
+        One independent RED review and exactly one control decision: continue for
+        `ACCEPTED`, restart the owning upstream node, or fail for `BLOCKED`.
+
+        ### Rules
+        Do not edit production, tests, specification, plan, contract, RED evidence,
+        `.swarm_*`, project deliverables, or command outputs not assigned to `review_red`.
+        Do not weaken expectations to match current behavior.
+
+        ### Retry and failure
+        Recompute from current test files and fresh command output. Restart only while
+        production implementation has not begun in this run.
+      waits_for: [red]
+      control:
+        signal: .omp-swarm/spec-to-code/run/red-review.control.yaml
+        allowed_restart_targets: [plan, contract, red]
+
+    implement:
+      type: agent
+      role: Contract-driven production implementer
+      workload:
+        profile: implementation
+        estimated_usage:
+          input_tokens: 55000
+          output_tokens: 11000
+          cache_read_tokens: 16000
+          cache_write_tokens: 3000
+      task: |
+        ### Goal
+        Implement the accepted observable contract and make every accepted RED test GREEN
+        without changing tests or weakening the contract.
+
+        ### Inputs
+        - The specification, accepted `plan.md`, `contract.md`, `design-review.md`, actual
+          accepted test files, `red.md`, and accepted `red-review.md` plus continued
+          control signals.
+        - Current implementation paths and project policy.
+        - Current `final-review.control.yaml` findings when this node is restarted.
+
+        ### Files to touch
+        - Edit only exact production, configuration, documentation, and generated paths
+          assigned to `implement` by the accepted plan.
+        - During command execution, write only mutable-output paths assigned to
+          `implement`; apply each declared disposition.
+        - Write `.omp-swarm/spec-to-code/run/implementation.md` with all authority and
+          test SHA-256; source-before and source-after SHA-256 for every implementation
+          path; `mutation_started`; changed paths; preserved command-output SHA-256;
+          per-requirement results; check results; status (`READY`, `NO_CHANGE`, or
+          `BLOCKED`); and reason.
+
+        ### Task
+        1. Hash every planned implementation path before any mutation.
+        2. Require current accepted design and RED evidence with matching specification,
+           plan, contract, and test hashes. If authority is missing or malformed, mutate
+           nothing and write `BLOCKED` with `mutation_started: false`, source-before
+           hashes, identical source-after hashes, and the exact evidence defect.
+        3. Reconcile current source and applicable final-review findings. Preserve correct
+           prior edits and unrelated user work.
+        4. Implement the smallest complete production behavior using existing project
+           conventions. Set `mutation_started: true` before the first project mutation.
+           Remove obsolete behavior; add no speculative features.
+        5. Run only accepted commands listing `implement` as an executor. Verify actual
+           writes stay within declared outputs, apply their dispositions, and make every
+           accepted RED test GREEN. If behavior was already satisfied, make no needless
+           source edit.
+        6. Hash every implementation path after work and record concrete results. Write
+           `READY` or `NO_CHANGE` only when all targeted behavior passes.
+
+        ### Outputs
+        Contract-compliant production code and one current implementation report.
+
+        ### Rules
+        Never edit accepted tests, specification, plan, contract, review artifacts,
+        control signals, `.swarm_*`, project paths outside implementation ownership, or
+        command outputs not assigned to `implement`. Do not mock or special-case tests
+        in production.
+
+        ### Retry and failure
+        Rerun idempotently against the modified tree. Preserve accurate mutation and
+        before/after hashes. Repair only production or implementation-report findings
+        owned by `implement`; preserve accepted test hashes.
+      waits_for: [review_red]
+
+    review:
+      type: agent
+      role: Independent specification acceptance reviewer
       workload:
         profile: review
         estimated_usage:
           input_tokens: 50000
           output_tokens: 8000
-          cache_read_tokens: 20000
-          cache_write_tokens: 4000
+          cache_read_tokens: 15000
+          cache_write_tokens: 2000
       task: |
         ### Goal
-        Independently accept the current batch, schedule one reachable repair, or fail
-        safely.
+        Decide whether current production satisfies every normative requirement under
+        the accepted contract and tests, with the complete project gate passing.
 
         ### Inputs
-        - Current specification sources.
-        - .omp-swarm/spec-to-code/state/spec-index.json,
-          .omp-swarm/spec-to-code/state/item-ledger.json, and
-          .omp-swarm/spec-to-code/state/active-batch.json.
-        - .omp-swarm/spec-to-code/run/meta/prepare.json and
-          .omp-swarm/spec-to-code/run/reports/full-project-check.json.
-        - For every item claimed by this batch, the exact acceptance_event_path recorded
-          in the ledger under
-          .omp-swarm/spec-to-code/state/audit/<batch-id>/<item-id>/<selection-id>.json.
-        - Actual current files in every claimed item's contract, implementation, and
-          transferred shared ownership.
+        - The specification; current plan, contract, design review, tests, RED evidence,
+          RED review, implementation report, project policy, and actual owned source.
 
         ### Files to touch
-        - .omp-swarm/spec-to-code/state/item-ledger.json: preserve the existing schema
-          and all unaffected item
-          records. For every reopened item, set status to REOPENED; append
-          {selection_id,event_path,event_sha256,superseded_by_selection_id:null,
-          counted,archived_at} to acceptance_event_history[]; clear the current
-          selection_id, supersedes_selection_id, repair_counted, accepted_event_path,
-          and accepted_event_sha256 so the repair mints a new immutable identity; and
-          append reopen_findings[{finding_id,evidence,required_mutation,owner,
-          detected_at}].
-        - .omp-swarm/spec-to-code/state/active-batch.json: preserve identifiers, limits,
-          approvals, issues,
-          counted_selection_ids, and accepted_item_count. Set status to exactly
-          CLOSED_NEXT_RUN_REQUIRED, CLOSED_COMPLETE, or OPEN_REPAIR; set current_item_id
-          only for OPEN_REPAIR; update updated_at.
-        - .omp-swarm/spec-to-code/run/reports/completion-audit.json: write
-          schema_revision, batch_id,
-          specification_fingerprint, full_project_check_sha256, claimed_items[],
-          findings[], decision, reopened_item_ids[], pending_item_ids[], reason, and
-          generated_at. Each claimed_items[] record contains item_id, selection_id,
-          acceptance_event_path, acceptance_event_sha256, item_review_sha256,
-          source_hashes_match, predecessor_revalidations[], and status. Each findings[]
-          record contains finding_id, item_id, severity, evidence, required_mutation,
-          owner, and disposition. decision is COMPLETE, NEXT_RUN_REQUIRED,
-          REPAIR_REQUIRED, or BLOCKED.
-        - .omp-swarm/spec-to-code/run/signals/final.control.yaml: write action and
-          reason. For restart, also
-          write target as exactly process_one_item or full_project_check. For continue
-          or fail, omit target.
+        - During command execution, write only mutable-output paths assigned to `review`;
+          apply each declared disposition. These outputs must not be project deliverables.
+        - Write one authoritative
+          `.omp-swarm/spec-to-code/run/final-review.control.yaml` containing `action`,
+          optional `target`, `reason`, hashes for every input and owned source/test file,
+          `implementation_mutation_started`, command results, per-requirement results,
+          and findings. Each finding names evidence, required mutation, current owner,
+          and acceptance check. Do not write a separate final decision report.
 
         ### Task
-        1. Require the full-project report to enumerate every project-required check
-           with current command, applicability evidence, exit status, and overall
-           decision.
-        2. For every claimed item, require exactly one current acceptance event with
-           matching schema revision; batch, selection, item, and input fingerprints;
-           ACCEPTED item-review decision and hash; phase report and control hashes;
-           approved method and observed result; accepted-deviation IDs; changed paths;
-           and source hashes. Match its hash to the ledger.
-        3. Inspect all claimed items, not only the last one. Treat a post-acceptance
-           source-hash change as stale unless a later owning item explicitly revalidated
-           the affected predecessor criteria in its own event.
-        4. Treat ledger and verification settlement as evidence only, never as item
-           acceptance.
-        5. Continue only when full-project verification is PASS, every claimed item has
-           current independently verified ACCEPTED evidence, every cross-item change has
-           predecessor-criterion revalidation, and no blocker remains.
-        6. When pending work remains only because item_limit was reached, set
-           CLOSED_NEXT_RUN_REQUIRED and audit status NEXT_RUN_REQUIRED; do not restart
-           to evade the bound.
-        7. Set CLOSED_COMPLETE and audit status COMPLETE only when no pending or
-           impacted item remains.
-        8. For a source or acceptance-evidence defect, map the required mutation to the
-           declared ownership of every claimed item. Reopen the exact owning item,
-           preserve its current event as superseded immutable history, clear its active
-           selection and event references, attach new evidence, set OPEN_REPAIR without
-           changing accepted_item_count, and restart process_one_item. The repaired item
-           must receive a new selection ID and acceptance event.
+        1. Require hash-matched accepted design and RED reviews and unchanged accepted
+           tests. Inspect actual production and tests, never reports alone.
+        2. Run only accepted commands listing `review` as an executor. Verify actual
+           writes stay within declared outputs, apply their dispositions, and execute
+           targeted tests, focused checks, and the full project gate against current files.
+        3. Trace every normative requirement through contract, test, production behavior,
+           and observed result. Reject missing behavior, test-specific implementation,
+           unauthorized paths, stale evidence, and hidden regressions.
+        4. When `implementation.md` is `BLOCKED` only because `red-review.md` is missing
+           or malformed, restart `review_red` only if `mutation_started` is false, every
+           current implementation-path hash matches its source-before and source-after
+           hash, and accepted test hashes are unchanged.
+        5. Restart `implement` only for correctable production, implementation-report, or
+           implementation-owned check defects.
+        6. Fail when RED-review evidence is defective after any production mutation. Fail
+           also for a semantic plan, contract, or RED-test defect discovered after
+           implementation, ambiguity, missing authority, unrelated project failure,
+           changed accepted tests, or unreachable correction.
+        7. Emit `action: continue` only when every requirement is observed and every
+           required check passes. The action is the sole final decision.
 
         ### Outputs
-        - One current completion audit.
-        - One valid control decision.
-        - When repairing, one reopen record per owning item. Combine multiple defects
-          owned by the same item; leave defects owned by other items pending for later
-          child rounds.
+        One authoritative evidence-bearing control decision: continue for accepted
+        current behavior, restart `review_red` for the proven pre-mutation evidence case,
+        restart `implement` for an owned production defect, or fail with a safe reason.
 
         ### Rules
-        - Do not edit project source, specifications, operator inputs, phase reports,
-          acceptance events, or runtime-owned .swarm_* state.
-        - Preserve stable IDs, closed issues, unaffected approvals, acceptance-event
-          history, durable pass counts, and accepted_item_count during repair.
-        - Recheck current source and event hashes instead of trusting stale READY
-          reports.
-        - Replace owned state, report, and control files atomically.
+        Do not edit project source, tests, specification, upstream evidence, `.swarm_*`,
+        project deliverables, or command outputs not assigned to `review`. Review every
+        requirement, not a sample. Replace only the authoritative final control artifact.
 
         ### Retry and failure
-        - Restart full_project_check only when its report is missing, malformed, stale,
-          or rerunning can change the failed verification predicate.
-        - Restart process_one_item only after reopening a defect's authorized owning
-          item; that suffix contains all current-item writers and acceptance nodes.
-        - Fail for specification ambiguity, exhausted item or restart limits, a required
-          mutation with no claimed owner, missing approval, malformed or duplicate
-          acceptance evidence, or any finding without a reachable authorized writer.
-        - Never restart for no progress without naming new evidence and the exact
-          artifact that can change.
-      waits_for: [full_project_check]
+        Recompute from current files and fresh command output. Never restart `review_red`
+        without proof that implementation did not mutate source. Never restart any node
+        without a reachable owner and a predicate its suffix can make true.
+      waits_for: [implement]
       control:
-        signal: .omp-swarm/spec-to-code/run/signals/final.control.yaml
-        allowed_restart_targets: [process_one_item, full_project_check]
+        signal: .omp-swarm/spec-to-code/run/final-review.control.yaml
+        allowed_restart_targets: [review_red, implement]
