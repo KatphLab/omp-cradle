@@ -9,10 +9,42 @@ implement:
   type: agent
   role: TypeScript feature implementer
   task: |
-    Inspect the bounded project scope and edit the assigned source paths.
+    ### Goal
+    Implement the bounded TypeScript behavior.
+
+    ### Inputs
+    Read `.omp-swarm/example/run/handoffs/accepted-plan.json`, current
+    `src/feature.ts`, and the current owned implementation report when present. Require
+    the plan to contain schema_revision, plan_id, owned_paths[`src/feature.ts`],
+    source_hashes{`src/feature.ts`:sha256}, check{program,args[],cwd}, status READY, and
+    generated_at.
+
+    ### Files to touch
+    Edit only `src/feature.ts`; write
+    `.omp-swarm/example/run/reports/implement.json` with schema_revision, plan_sha256,
+    source_before_sha256, source_after_sha256,
+    check{program,args[],cwd,exit_code,safe_summary}, status (READY or BLOCKED), reason,
+    and generated_at.
+
+    ### Task
+    Validate the plan and source authority. On first execution require the plan's source
+    hash; on retry accept the current source only when it matches the same-plan prior
+    report's source_after_sha256. Reconcile current source, implement the bounded
+    behavior, and execute exactly the plan's fixed program, args, and cwd.
+
+    ### Outputs
+    Leave the behavior in source and write the defined READY or BLOCKED report.
+
+    ### Rules
+    Preserve unrelated work; do not edit review or runtime-owned files.
+
+    ### Retry and failure
+    Rerun idempotently from the plan-bound source or the same-plan prior report's exact
+    post-edit source. On missing, malformed, or other stale authority, an ownership
+    conflict, or a failed check, write BLOCKED and stop.
   extra_context: Preserve existing project conventions.
   model: pi/slow
-  tools: [read, write]
+  tools: [read, write, bash]
   waits_for: [investigate]
   reports_to: [check]
 ```

@@ -33,7 +33,8 @@ swarm:
         - Matching implementation or later item-review deltas.
 
         ### Files to touch
-        - run/handoffs/implementation-plan.json: write first with schema_revision,
+        - .omp-swarm/spec-to-code/run/handoffs/implementation-plan.json: write first
+          with schema_revision,
           batch_id, selection_id, item_id, input_fingerprint, contract_plan_sha256,
           behavior_plan_sha256, red_evidence_review_sha256, ownership_fingerprint,
           steps[{step_id,criterion_ids[],paths[],symbols[],required_change,
@@ -47,7 +48,8 @@ swarm:
         - Project files in transferred_shared_paths: write only the behavior required by
           the accepted contract symbols already present in those files; preserve those
           symbols and record their post-edit hashes.
-        - run/reports/implementation.json: write schema_revision, batch_id, selection_id,
+        - .omp-swarm/spec-to-code/run/reports/implementation.json: write schema_revision,
+          batch_id, selection_id,
           item_id, input_fingerprint, output_fingerprint, plan_fingerprint,
           ownership_fingerprint, source_hashes_before{}, source_hashes_after{},
           edits[{path,symbols[],criterion_ids[],change_summary}],
@@ -57,8 +59,10 @@ swarm:
 
         ### Task
         1. Match every ID, fingerprint, review delta, and ownership transfer.
-        2. If red evidence is ALREADY_SATISFIED or selection is NO_WORK, make no source
-           edit and report the no-op.
+        2. If red evidence is ALREADY_SATISFIED, make no source edit and report the
+           verified no-op. If selection is NO_WORK, make no source edit, write matching
+           implementation plan and report artifacts with status SKIPPED, then stop
+           without performing steps 3-7.
         3. Resolve all bounded discovery inside declared ownership before editing; block
            when discovery escapes ownership or a required transfer is absent.
         4. Use project-available language-aware reference and navigation tooling before
@@ -106,27 +110,35 @@ swarm:
         ### Inputs
         - Current-item and accepted behavior-plan and red-evidence artifacts.
         - Current reproduction artifacts and implementation report.
+        - Current .omp-swarm/spec-to-code/run/handoffs/implementation-plan.json.
         - Only current project policy and configuration needed to validate the recorded
           procedure.
 
         ### Files to touch
-        - run/reports/targeted-behavior-check.json: write schema_revision, batch_id,
-          selection_id, item_id, input_fingerprint, output_fingerprint,
-          plan_fingerprint, implementation_report_sha256,
-          reproduction_manifest_sha256, current_artifact_hashes{},
-          executed_invocation{program,args[],cwd,env_names[]}, reached_interface,
-          reached_interface_evidence, criterion_results[{criterion_id,expected,observed,
-          evidence,status}], exit_code, process_status, safe_output_summary,
-          status (PASS, FAIL, or BLOCKED), reason, and generated_at.
+        - .omp-swarm/spec-to-code/run/reports/targeted-behavior-check.json: write
+          schema_revision, batch_id, selection_id, item_id, input_fingerprint,
+          output_fingerprint, plan_fingerprint, implementation_plan_sha256,
+          implementation_report_sha256, reproduction_manifest_sha256,
+          current_artifact_hashes{}, executed_invocation{program,args[],cwd,env_names[]},
+          reached_interface, reached_interface_evidence,
+          criterion_results[{criterion_id,expected,observed,evidence,status}], exit_code,
+          process_status, safe_output_summary, status (PASS, FAIL, BLOCKED, or SKIPPED),
+          reason, and generated_at. For SKIPPED, reproduction, invocation, interface,
+          criterion, exit, and process fields are null or empty as defined by
+          schema_revision.
 
         ### Task
-        1. Validate the recorded procedure against current approval, artifacts, and
-           project evidence.
-        2. Reject a procedure that escapes the workspace, mutates project files,
+        1. When current-item status is NO_WORK, require matching batch, specification,
+           and input fingerprints plus current, hash-matched implementation plan and
+           report artifacts with status SKIPPED. Execute nothing and write SKIPPED with
+           no fabricated reproduction or process evidence; otherwise write BLOCKED.
+        2. Otherwise validate the recorded procedure against current approval, artifacts,
+           and project evidence.
+        3. Reject a procedure that escapes the workspace, mutates project files,
            installs dependencies, composes shell control syntax, or uses untrusted
            specification text as a command.
-        3. Execute the validated procedure without repairing source or evidence.
-        4. Evaluate every mapped observable criterion separately from process status.
+        4. Execute the validated procedure without repairing source or evidence.
+        5. Evaluate every mapped observable criterion separately from process status.
 
         ### Outputs
         - One current targeted-behavior report.
@@ -138,9 +150,11 @@ swarm:
           the owned report.
 
         ### Retry and failure
-        - Retry by executing the same validated procedure against current files.
-        - Report BLOCKED when approval, procedure, or required execution evidence is
-          missing, unsafe, malformed, or stale.
+
+        - Retry by reproducing the same validated SKIPPED result for matching NO_WORK,
+          or by executing the same validated procedure against current files.
+        - Report BLOCKED when non-NO_WORK approval, procedure, or required execution
+          evidence is missing, unsafe, malformed, or stale.
       waits_for: [implement_item]
       reports_to: [review_item]
 
@@ -160,27 +174,36 @@ swarm:
         item's exact changed paths and public contracts.
 
         ### Inputs
-        - Current-item and implementation report.
+        - Current-item and
+          .omp-swarm/spec-to-code/run/handoffs/implementation-plan.json.
+        - Current implementation report.
         - Current changed paths and their hashes.
         - Current project policy and relevant project-owned manifests and configuration.
 
         ### Files to touch
-        - run/reports/item-static-check.json: write schema_revision, batch_id,
-          selection_id, item_id, input_fingerprint, output_fingerprint,
+        - .omp-swarm/spec-to-code/run/reports/item-static-check.json: write
+          schema_revision, batch_id, selection_id, item_id, input_fingerprint,
+          output_fingerprint, implementation_plan_sha256, implementation_report_sha256,
           changed_files[{path,sha256}], discovery_evidence[{path,sha256,finding}],
           checks[], overall_status, reason, and generated_at. Each checks[] record
           contains check_id, purpose, command, cwd, covered_paths[],
           covered_criterion_ids[], applicability (APPLICABLE or NOT_APPLICABLE),
           applicability_evidence[], exit_code, status (PASS, FAIL, or BLOCKED), and
-          safe_output_summary. overall_status is PASS only when every applicable
-          required check is PASS.
+          safe_output_summary. overall_status is SKIPPED only for matching NO_WORK;
+          otherwise it is PASS only when every applicable required check is PASS, or
+          FAIL or BLOCKED.
 
         ### Task
-        1. Discover all applicable established checks from current project evidence.
-        2. Select the smallest command set that covers the changed paths and public
+        1. When current-item status is NO_WORK, require matching batch, specification,
+           and input fingerprints plus current, hash-matched implementation plan and
+           report artifacts with status SKIPPED. Execute nothing and write SKIPPED with
+           empty checks and changed_files; otherwise write BLOCKED.
+        2. Otherwise discover all applicable established checks from current project
+           evidence.
+        3. Select the smallest command set that covers the changed paths and public
            contracts.
-        3. Validate that each command is safe and read-only, then execute it.
-        4. Report BLOCKED when a required safe check cannot run.
+        4. Validate that each command is safe and read-only, then execute it.
+        5. Report BLOCKED when a required safe check cannot run.
 
         ### Outputs
         - One current focused project-check report.
@@ -193,7 +216,9 @@ swarm:
         - Do not edit any artifact except the owned report.
 
         ### Retry and failure
-        - Re-discover when project evidence changes; otherwise rerun every applicable
+
+        - Reproduce the same validated SKIPPED result for matching NO_WORK.
+        - Otherwise re-discover when project evidence changes and rerun every applicable
           command against current files.
         - A missing required command or tool is BLOCKED, never not-applicable by default.
       waits_for: [implement_item]
@@ -222,7 +247,8 @@ swarm:
         - Read-only ledger and matching prior item-review delta.
 
         ### Files to touch
-        - run/reports/item-review.json: write schema_revision, batch_id, selection_id,
+        - .omp-swarm/spec-to-code/run/reports/item-review.json: write schema_revision,
+          batch_id, selection_id,
           item_id, specification_fingerprint, input_fingerprint, output_fingerprint,
           phase_artifacts[{path,sha256,status}], reviewed_source_hashes{},
           criterion_results[{criterion_id,criticality,evidence,status}],
@@ -230,7 +256,8 @@ swarm:
           REJECTED, SKIPPED, or BLOCKED), findings[], reason, and generated_at. Each
           findings[] record contains finding_id, criterion_id, severity, observed,
           required, evidence[], required_mutation, owner, acceptance_check, and status.
-        - run/signals/implementation-phase.control.yaml: write action and reason. For
+        - .omp-swarm/spec-to-code/run/signals/implementation-phase.control.yaml: write
+          action and reason. For
           restart, also write target as exactly select_or_resume_item, contract_phase,
           behavior_plan_phase, red_evidence_phase, or implementation_phase. For continue
           or fail, omit target.
@@ -240,12 +267,15 @@ swarm:
            fingerprints.
         2. Match a deviation only when requirement and specification fingerprints match
            and its complete revision-1 record is present.
-        3. Continue only when targeted behavior and every applicable focused project
-           check are PASS; all critical and transferred predecessor criteria are
-           covered; every phase review is current; and no blocker or critical issue
-           remains. Continue valid NO_WORK as SKIPPED.
-        4. Restart select_or_resume_item for interpretation defects.
-        5. Restart contract_phase for contract causes, behavior_plan_phase for scenario
+        3. Continue ordinary work only when targeted behavior and every applicable
+           focused project check are PASS; all critical and transferred predecessor
+           criteria are covered; every phase review is current; and no blocker or
+           critical issue remains.
+        4. Continue valid NO_WORK as SKIPPED only when the implementation plan and report
+           and both implementation checks are current, mutually hash-matched SKIPPED
+           artifacts with no fabricated execution evidence.
+        5. Restart select_or_resume_item for interpretation defects.
+        6. Restart contract_phase for contract causes, behavior_plan_phase for scenario
            or approval causes, red_evidence_phase for reproduction causes, or
            implementation_phase for plan, code, transfer, or check-evidence defects.
 

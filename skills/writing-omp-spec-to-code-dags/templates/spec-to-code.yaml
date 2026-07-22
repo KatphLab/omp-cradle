@@ -24,15 +24,19 @@
 #     deviations may be empty. Every non-empty string and fingerprint is required.
 #
 # Durable state contract:
-#   prepare_index initially owns state/spec-index.json, state/item-ledger.json, and
-#   state/active-batch.json. process_one_item transfers ledger ownership serially from
+#   prepare_index initially owns .omp-swarm/spec-to-code/state/spec-index.json,
+#   .omp-swarm/spec-to-code/state/item-ledger.json, and
+#   .omp-swarm/spec-to-code/state/active-batch.json. process_one_item transfers ledger
+#   ownership serially from
 #   select_or_resume_item to advance_item and transfers active-batch ownership to
 #   advance_item once per item. completion_audit owns both after the repeated graph
 #   settles. The next normal/resumed run transfers both back to prepare_index.
-#   state/audit contains immutable-by-selection acceptance evidence. No node reads or
+#   .omp-swarm/spec-to-code/state/audit contains immutable-by-selection acceptance
+#   evidence. No node reads or
 #   edits runtime-owned .swarm_* state.
 #
-# Every execution of prepare_index safely rebuilds the DAG-owned run/ subtree from
+# Every execution of prepare_index safely rebuilds the DAG-owned
+# .omp-swarm/spec-to-code/run/ subtree from
 # durable state before downstream work. One child round handles one stable requirement
 # item. Eight rounds form one bounded batch; another normal run resumes the durable
 # cursor. Control rewinds and durable item/approval limits bound all retry paths.
@@ -82,16 +86,31 @@ swarm:
         for the existing project.
 
         ### Inputs
-        - The three revision-1 operator inputs documented at the top of this file.
-        - Every complete specification source listed by spec-sources.json.
-        - Existing state/spec-index.json, state/item-ledger.json, and
-          state/active-batch.json when present.
+        - .omp-swarm/spec-to-code/input/spec-sources.json with exactly revision-1
+          fields schema_revision, sources[{id,path}], precedence[], item_limit,
+          item_pass_limit, and approval_resume_limit. Source IDs and paths are non-empty
+          and unique; precedence contains every source ID exactly once, highest first;
+          limits are respectively 1..8, 1..6, and 1..3.
+        - Every complete specification source named by that validated input.
+        - .omp-swarm/spec-to-code/input/test-approval.json with exactly revision-1
+          fields schema_revision and approvals[{approval_id,requirement_id,
+          spec_fingerprint,plan_fingerprint,allowed_methods[]}]. IDs are unique and
+          non-empty; fingerprints and methods are safe and non-empty; plan_fingerprint
+          is null or exact.
+        - .omp-swarm/spec-to-code/input/accepted-deviations.json with exactly revision-1
+          fields schema_revision and deviations[{deviation_id,requirement_id,
+          spec_fingerprint,rationale,risk,evidence,revisit_condition}]. IDs are unique
+          and every record field is non-empty.
+        - Existing .omp-swarm/spec-to-code/state/spec-index.json,
+          .omp-swarm/spec-to-code/state/item-ledger.json, and
+          .omp-swarm/spec-to-code/state/active-batch.json when present.
         - Current workspace contents and project policy.
         - Only the project manifests, configuration, entry points, and bounded source
           regions needed to identify the project and map requirements.
 
         ### Files to touch
-        - state/spec-index.json: write a JSON object with schema_revision,
+        - .omp-swarm/spec-to-code/state/spec-index.json: write a JSON object with
+          schema_revision,
           specification_fingerprint, source_fingerprints, input_fingerprints,
           project_anchors[{path,sha256}], items[], impact_set[], generated_at, and
           status. Each items[] record contains item_id, requirement_id, input_fingerprint,
@@ -99,25 +118,33 @@ swarm:
           public_interfaces[], discovery_scope[], contract_only_paths[],
           implementation_only_paths[], shared_paths[{path,from,to,transfer_after}],
           forbidden_paths[], predecessor_revalidations[], and disposition.
-        - state/item-ledger.json: write schema_revision, specification_fingerprint,
+        - .omp-swarm/spec-to-code/state/item-ledger.json: write schema_revision,
+          specification_fingerprint,
           items{}, and updated_at. Each items[item_id] contains status, selection_id,
-          durable_pass_count, approval_resume_count, phase_dispositions{},
-          accepted_event_path, accepted_event_sha256, reopen_findings[], and
-          last_updated_at. Preserve records not changed by this preparation.
-        - state/active-batch.json: write schema_revision, batch_id,
+          supersedes_selection_id, repair_counted, durable_pass_count,
+          approval_resume_count, phase_dispositions{}, accepted_event_path,
+          accepted_event_sha256, acceptance_event_history[{selection_id,event_path,
+          event_sha256,superseded_by_selection_id,counted,archived_at}],
+          reopen_findings[], and last_updated_at. Preserve records not changed by this
+          preparation.
+        - .omp-swarm/spec-to-code/state/active-batch.json: write schema_revision,
+          batch_id,
           specification_fingerprint, status, item_limit, item_pass_limit,
           approval_resume_limit, current_item_id, accepted_item_count,
           counted_selection_ids[], approval_ids[], issue_ids[], created_at, and
           updated_at.
         - .omp-swarm/spec-to-code/run/: remove and recreate only this literal subtree
           with empty meta/, handoffs/, reports/, signals/, and scratch/ directories.
-        - run/reports/prepare-index.json: write schema_revision, batch_id,
+        - .omp-swarm/spec-to-code/run/reports/prepare-index.json: write schema_revision,
+          batch_id,
           specification_fingerprint, input_fingerprints, input_digests{},
           project_anchors[{path,sha256}], indexed_item_ids[], impact_set[], status
           (READY or BLOCKED), reason, and generated_at.
-        - run/signals/prepare.control.yaml: write action and reason only. action is
+        - .omp-swarm/spec-to-code/run/signals/prepare.control.yaml: write action and
+          reason only. action is
           continue for READY or fail for BLOCKED; never write target.
-        - run/meta/prepare.json: write last with schema_revision, batch_id,
+        - .omp-swarm/spec-to-code/run/meta/prepare.json: write last with schema_revision,
+          batch_id,
           specification_fingerprint, input_fingerprints, input_digests{},
           project_anchors[{path,sha256}], generated_at, and status matching the report.
 
@@ -149,8 +176,9 @@ swarm:
            IN_PROGRESS item without charging a pass merely because this node reran.
 
         ### Outputs
-        - A complete current manifest and durable queue in state/.
-        - A clean current-run coordination subtree in run/.
+        - A complete current manifest and durable queue in
+          .omp-swarm/spec-to-code/state/.
+        - A clean current-run coordination subtree in .omp-swarm/spec-to-code/run/.
         - READY even when target implementation is absent, or BLOCKED only for
           malformed or missing authority, unresolved precedence, unsafe workspace,
           contradictory ownership, or exhausted durable limits.
@@ -208,7 +236,8 @@ swarm:
         - Current batch metadata and project-anchor hashes from preparation.
 
         ### Files to touch
-        - run/reports/full-project-check.json: write a JSON object with
+        - .omp-swarm/spec-to-code/run/reports/full-project-check.json: write a JSON
+          object with
           schema_revision, batch_id, specification_fingerprint,
           project_anchors[{path,sha256}], discovery_evidence[{path,sha256,finding}],
           checks[], overall_status, reason, and generated_at. Each checks[] record
@@ -260,24 +289,34 @@ swarm:
 
         ### Inputs
         - Current specification sources.
-        - state/spec-index.json, state/item-ledger.json, and state/active-batch.json.
-        - run/meta/prepare.json and run/reports/full-project-check.json.
+        - .omp-swarm/spec-to-code/state/spec-index.json,
+          .omp-swarm/spec-to-code/state/item-ledger.json, and
+          .omp-swarm/spec-to-code/state/active-batch.json.
+        - .omp-swarm/spec-to-code/run/meta/prepare.json and
+          .omp-swarm/spec-to-code/run/reports/full-project-check.json.
         - For every item claimed by this batch, the exact acceptance_event_path recorded
           in the ledger under
-          state/audit/<batch-id>/<item-id>/<selection-id>.json.
+          .omp-swarm/spec-to-code/state/audit/<batch-id>/<item-id>/<selection-id>.json.
         - Actual current files in every claimed item's contract, implementation, and
           transferred shared ownership.
 
         ### Files to touch
-        - state/item-ledger.json: preserve the existing schema and all unaffected item
-          records. For every reopened item, set status to REOPENED, retain selection and
-          acceptance-event history, and append reopen_findings[{finding_id,evidence,
-          required_mutation,owner,detected_at}].
-        - state/active-batch.json: preserve identifiers, limits, approvals, issues,
+        - .omp-swarm/spec-to-code/state/item-ledger.json: preserve the existing schema
+          and all unaffected item
+          records. For every reopened item, set status to REOPENED; append
+          {selection_id,event_path,event_sha256,superseded_by_selection_id:null,
+          counted,archived_at} to acceptance_event_history[]; clear the current
+          selection_id, supersedes_selection_id, repair_counted, accepted_event_path,
+          and accepted_event_sha256 so the repair mints a new immutable identity; and
+          append reopen_findings[{finding_id,evidence,required_mutation,owner,
+          detected_at}].
+        - .omp-swarm/spec-to-code/state/active-batch.json: preserve identifiers, limits,
+          approvals, issues,
           counted_selection_ids, and accepted_item_count. Set status to exactly
           CLOSED_NEXT_RUN_REQUIRED, CLOSED_COMPLETE, or OPEN_REPAIR; set current_item_id
           only for OPEN_REPAIR; update updated_at.
-        - run/reports/completion-audit.json: write schema_revision, batch_id,
+        - .omp-swarm/spec-to-code/run/reports/completion-audit.json: write
+          schema_revision, batch_id,
           specification_fingerprint, full_project_check_sha256, claimed_items[],
           findings[], decision, reopened_item_ids[], pending_item_ids[], reason, and
           generated_at. Each claimed_items[] record contains item_id, selection_id,
@@ -286,7 +325,8 @@ swarm:
           record contains finding_id, item_id, severity, evidence, required_mutation,
           owner, and disposition. decision is COMPLETE, NEXT_RUN_REQUIRED,
           REPAIR_REQUIRED, or BLOCKED.
-        - run/signals/final.control.yaml: write action and reason. For restart, also
+        - .omp-swarm/spec-to-code/run/signals/final.control.yaml: write action and
+          reason. For restart, also
           write target as exactly process_one_item or full_project_check. For continue
           or fail, omit target.
 
@@ -314,8 +354,10 @@ swarm:
            impacted item remains.
         8. For a source or acceptance-evidence defect, map the required mutation to the
            declared ownership of every claimed item. Reopen the exact owning item,
-           attach new evidence, set OPEN_REPAIR without changing accepted_item_count,
-           and restart process_one_item.
+           preserve its current event as superseded immutable history, clear its active
+           selection and event references, attach new evidence, set OPEN_REPAIR without
+           changing accepted_item_count, and restart process_one_item. The repaired item
+           must receive a new selection ID and acceptance event.
 
         ### Outputs
         - One current completion audit.
@@ -328,7 +370,7 @@ swarm:
         - Do not edit project source, specifications, operator inputs, phase reports,
           acceptance events, or runtime-owned .swarm_* state.
         - Preserve stable IDs, closed issues, unaffected approvals, acceptance-event
-          references, durable pass counts, and accepted_item_count during repair.
+          history, durable pass counts, and accepted_item_count during repair.
         - Recheck current source and event hashes instead of trusting stale READY
           reports.
         - Replace owned state, report, and control files atomically.

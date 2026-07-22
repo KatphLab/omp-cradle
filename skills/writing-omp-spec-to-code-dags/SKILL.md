@@ -27,13 +27,13 @@ The implementation phase fans out only independent behavior and static checks, t
 
 ## Preserve the State Layers
 
-| Layer          | Contents                                                        | Writers                         |
-| -------------- | --------------------------------------------------------------- | ------------------------------- |
-| Operator input | specification sources, test approvals, accepted deviations      | Operator only; DAG is read-only |
-| Durable state  | specification index, item ledger, active batch, approval pauses | Explicit phase-current owners   |
-| Current run    | `meta/`, `handoffs/`, `reports/`, `signals/`, `scratch/`        | One named node per path         |
-| Audit          | immutable accepted item events keyed by batch/item/selection    | `advance_item` only             |
-| Runtime        | `.swarm_*`                                                      | OMP only                        |
+| Layer          | Contents                                                               | Writers                         |
+| -------------- | ---------------------------------------------------------------------- | ------------------------------- |
+| Operator input | specification sources, test approvals, accepted deviations             | Operator only; DAG is read-only |
+| Durable state  | specification index, ledger, batch, approval pauses and plan snapshots | Explicit phase-current owners   |
+| Current run    | `meta/`, `handoffs/`, `reports/`, `signals/`, `scratch/`               | One named node per path         |
+| Audit          | immutable accepted item events keyed by batch/item/selection           | `advance_item` only             |
+| Runtime        | `.swarm_*`                                                             | OMP only                        |
 
 `prepare_index` verifies project anchors, reconciles input fingerprints with durable state, and rebuilds only the literal current-run subtree. It preserves unaffected ledger records, approvals, pauses, and accepted events. A missing implementation is a requirement finding, not a preparation blocker.
 
@@ -48,14 +48,21 @@ The specification index gives every item stable IDs, citations, fingerprints, ac
 
 Same-item shared paths are safe only because their writers are serialized and the transfer boundary is explicit. Cross-item mutable overlap requires an explicit dependency transfer and successor revalidation of affected predecessor criteria. Otherwise repartition or serialize before execution.
 
-One child round selects or resumes exactly one item and one `selection_id`. Every artifact matches batch, item, selection, specification, input, plan, ownership, and source fingerprints before mutation. Item, pass, approval-resume, graph-repeat, and restart limits are durable bounds; a rerun never double-charges a counter.
+An actionable child round selects or resumes exactly one item. Resume preserves the
+`selection_id` only for the same in-progress attempt; reopening accepted work preserves
+the old event as immutable history and mints a replacement selection and event without
+double-counting the item. `NO_WORK` produces matched skipped phase evidence and no
+acceptance event. Every artifact matches batch, item, selection, specification, input,
+plan, ownership, and source fingerprints before mutation. Item, pass, approval-resume,
+graph-repeat, and restart limits are durable bounds; a rerun never double-charges a
+counter.
 
 ## Keep Phase Responsibilities Separate
 
 | Phase          | Writer path                                                                     | Acceptance boundary                                                   |
 | -------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | Contract       | plan exact observable interfaces; implement only contract ownership             | contract check + independent contract review                          |
-| Behavior plan  | map each criterion to real observable scenarios and a project-native invocation | independent plan/approval review                                      |
+| Behavior plan  | map criteria to observable scenarios; persist an approval-pending plan snapshot | independent plan/approval review                                      |
 | Red evidence   | create and execute an approved reproduction against pre-change behavior         | review proves expected missing behavior or already satisfied behavior |
 | Implementation | implement only missing behavior in implementation and transferred shared paths  | parallel targeted behavior/static checks + end-to-end item review     |
 | Advance        | hash current evidence and changed files; update ledger/batch exactly once       | immutable acceptance event                                            |
@@ -78,13 +85,21 @@ Durable ownership transfers are explicit:
 
 1. `prepare_index` initializes or reconciles the item ledger and active batch.
 2. `select_or_resume_item` owns ledger selection fields, then relinquishes the ledger.
-3. `advance_item` reacquires ledger ownership, owns the active batch for settlement, and writes the immutable acceptance event.
-4. `completion_audit` owns batch-level reopening/closure after the repeated graph settles.
+3. `advance_item` reacquires ledger ownership, owns the active batch for settlement, and writes the immutable acceptance event or settles verified `NO_WORK` without one.
+4. `completion_audit` owns batch-level reopening/closure; reopening archives the current event identity and clears active event references.
 5. The next normal run transfers reconciliation ownership back to `prepare_index`.
 
-A batch audit may restart item processing only after reopening the exact owning item in durable state. It never asks a source implementer to patch status directly.
+A batch audit may restart item processing only after reopening the exact owning item in
+durable state. Reopened accepted work gets a new selection identity; the superseded event
+remains immutable, and the batch count stays stable. The audit never asks a source
+implementer to patch status directly.
 
-Control targets are local to the YAML that declares them. A root `completion_audit` cannot target child node `advance_item`; for a ledger, event, or accepted-source defect it reopens the exact item and restarts parent node `process_one_item`. The child reruns idempotently until `advance_item` reacquires settlement ownership. An item reviewer runs before settlement and therefore cannot diagnose an acceptance-event hash that does not exist yet.
+Control targets are local to the YAML that declares them. A root `completion_audit`
+cannot target child node `advance_item`; for a ledger, event, or accepted-source defect
+it reopens the exact item and restarts parent node `process_one_item`. The child mints a
+replacement selection and reruns idempotently until `advance_item` reacquires settlement
+ownership. An item reviewer runs before settlement and therefore cannot diagnose an
+acceptance-event hash that does not exist yet.
 
 ## Adapt in This Order
 

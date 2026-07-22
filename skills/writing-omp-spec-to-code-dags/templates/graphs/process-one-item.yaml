@@ -30,23 +30,29 @@ swarm:
         Claim or resume exactly one stable requirement item for this child round.
 
         ### Inputs
-        - run/signals/prepare.control.yaml.
-        - state/spec-index.json, state/item-ledger.json, state/active-batch.json, and
-          run/meta/prepare.json.
+        - .omp-swarm/spec-to-code/run/signals/prepare.control.yaml.
+        - .omp-swarm/spec-to-code/state/spec-index.json,
+          .omp-swarm/spec-to-code/state/item-ledger.json,
+          .omp-swarm/spec-to-code/state/active-batch.json, and
+          .omp-swarm/spec-to-code/run/meta/prepare.json.
         - Complete cited specification sections and dependency dispositions.
         - Exact revision-1 operator approval and deviation inputs.
-        - state/approval-pauses/<item-id>.json when present.
+        - .omp-swarm/spec-to-code/state/approval-pauses/<item-id>.json when present.
         - The latest completion-audit report only when the ledger says it reopened this
           item.
 
         ### Files to touch
-        - state/item-ledger.json: preserve the top-level schema and every unrelated item.
-          For the selected items[item_id], write status IN_PROGRESS, selection_id,
-          durable_pass_count, approval_resume_count, phase_dispositions{},
-          reopen_findings[], accepted_event_path, accepted_event_sha256, and
-          last_updated_at.
-        - run/handoffs/current-item.json: write schema_revision, batch_id, selection_id,
-          item_id, requirement_id, specification_fingerprint, input_fingerprint,
+        - .omp-swarm/spec-to-code/state/item-ledger.json: preserve the top-level schema
+          and every unrelated item.
+          For the selected items[item_id], write status, selection_id,
+          supersedes_selection_id, repair_counted, durable_pass_count,
+          approval_resume_count, phase_dispositions{}, reopen_findings[],
+          accepted_event_path, accepted_event_sha256,
+          acceptance_event_history[{selection_id,event_path,event_sha256,
+          superseded_by_selection_id,counted,archived_at}], and last_updated_at.
+        - .omp-swarm/spec-to-code/run/handoffs/current-item.json: write schema_revision,
+          batch_id, selection_id, supersedes_selection_id, repair_counted, item_id,
+          requirement_id, specification_fingerprint, input_fingerprint,
           source_citations[{source_id,path,start_line,end_line,sha256}], normative_text,
           acceptance_criteria[{criterion_id,text,criticality}], dependencies[],
           dependency_dispositions{}, criticality, public_interfaces[], discovery_scope[],
@@ -55,12 +61,19 @@ swarm:
           predecessor_revalidations[], approval_refs[], deviation_refs[],
           phase_dispositions{}, status (SELECTED, RESUMED, NO_WORK, or BLOCKED), reason,
           and generated_at.
-        - run/reports/item-selection.json: write schema_revision, batch_id, selection_id,
-          item_id, specification_fingerprint, input_fingerprint, candidate_item_ids[],
+          For NO_WORK, item-, selection-, requirement-, input-, approval-, and
+          deviation-specific scalar fields are null, arrays/maps are empty, and the
+          batch and specification fingerprints remain required.
+        - .omp-swarm/spec-to-code/run/reports/item-selection.json: write schema_revision,
+          batch_id, selection_id, supersedes_selection_id, repair_counted, item_id,
+          specification_fingerprint, input_fingerprint, candidate_item_ids[],
           dependency_evidence[], approval_match{approval_id,matched,reason},
           pass_count_before, pass_count_after, approval_resume_count_before,
           approval_resume_count_after, status (SELECTED, RESUMED, NO_WORK, or BLOCKED),
           reason, and generated_at.
+          For NO_WORK, selection_id, supersedes_selection_id, item_id, and
+          input_fingerprint are null, repair_counted is false, and the batch and
+          specification fingerprints remain required.
 
         ### Task
         1. Require the prepare control to say continue. Match batch ID and specification
@@ -69,11 +82,13 @@ swarm:
            the highest-priority dependency-ready pending or impacted item.
         3. Set NO_WORK only when reconciliation finds no pending, impacted, reopened, or
            in-progress item.
-        4. Put schema revision; batch, selection, and item IDs and fingerprints; source
-           citations; normative text; acceptance criteria; dependencies; criticality;
-           contract and implementation ownership; same-item shared paths and transfer
-           boundary; forbidden paths; approval references; and phase dispositions in
-           current-item.json.
+        4. For actionable work, put schema revision; batch, selection, and item IDs and
+           fingerprints; source citations; normative text; acceptance criteria;
+           dependencies; criticality; contract and implementation ownership; same-item
+           shared paths and transfer boundary; forbidden paths; approval references;
+           and phase dispositions in current-item.json. For NO_WORK, write only the
+           required batch/specification identity, empty item-specific collections, and
+           the explicit null fields defined by its schema.
         5. Allow same-item path overlap because phase writers are serialized. Reject
            cross-item mutable overlap unless an explicit dependency transfers ownership
            and requires predecessor-criterion revalidation.
@@ -82,7 +97,12 @@ swarm:
         7. When a same-item/spec/plan APPROVAL_REQUIRED pause gains matching approval,
            increment approval_resume_count without spending an item pass. Otherwise
            charge every actionable invocation against the durable item-pass limit.
-        8. Retain selection_id when resuming the same item and mark the item IN_PROGRESS.
+        8. Retain selection_id, supersedes_selection_id, and repair_counted when resuming
+           the same IN_PROGRESS item. For a REOPENED accepted item, require its prior
+           event in acceptance_event_history, mint a new selection_id, persist the prior
+           accepted selection as supersedes_selection_id, set repair_counted when that
+           selection is in counted_selection_ids, copy both fields to the current-item
+           and selection reports, and mark the item IN_PROGRESS.
 
         ### Outputs
         - One current-item packet for downstream phase graphs, or an explicit NO_WORK
@@ -92,7 +112,8 @@ swarm:
 
         ### Rules
         - This node is the sole current writer of the three listed files.
-        - Treat state/active-batch.json and every other durable-state file as read-only.
+        - Treat .omp-swarm/spec-to-code/state/active-batch.json and every other
+          durable-state file as read-only.
         - Do not write project files, specifications, operator inputs, phase artifacts,
           signals, or runtime-owned .swarm_* paths.
         - Relinquish ledger ownership to advance_item after selection settles.
@@ -103,8 +124,9 @@ swarm:
 
         ### Retry and failure
         - Retry idempotently from current durable state.
-        - A retry for the same item must preserve selection_id and must not double-charge
-          item or approval-resume budgets.
+        - A retry for the same IN_PROGRESS item must preserve selection_id. A reopened
+          item mints exactly one replacement selection and then preserves it on retry.
+          Never double-charge item or approval-resume budgets.
       reports_to: [contract_phase]
 
     contract_phase:
@@ -171,22 +193,29 @@ swarm:
         counter, and choose the bounded repeat result.
 
         ### Inputs
-        - run/handoffs/current-item.json.
+        - .omp-swarm/spec-to-code/run/handoffs/current-item.json.
         - Every current phase report and all four phase control decisions.
         - Current hashes for every declared changed file.
-        - state/spec-index.json, state/item-ledger.json, and
-          state/active-batch.json.
+        - .omp-swarm/spec-to-code/state/spec-index.json,
+          .omp-swarm/spec-to-code/state/item-ledger.json, and
+          .omp-swarm/spec-to-code/state/active-batch.json.
 
         ### Files to touch
-        - state/item-ledger.json: preserve its schema and unrelated records. For
-          items[item_id], write final status, selection_id, phase_dispositions,
-          accepted_event_path, accepted_event_sha256, reopen_findings, and
+        - .omp-swarm/spec-to-code/state/item-ledger.json: preserve its schema and
+          unrelated records. For
+          items[item_id], write final status, selection_id, supersedes_selection_id,
+          repair_counted, phase_dispositions, accepted_event_path,
+          accepted_event_sha256, acceptance_event_history[], reopen_findings, and
           last_updated_at.
-        - state/active-batch.json: preserve batch identifiers and configured limits;
+        - .omp-swarm/spec-to-code/state/active-batch.json: preserve batch identifiers
+          and configured limits;
           write current_item_id, accepted_item_count, counted_selection_ids[], status,
-          and updated_at. Add selection_id to counted_selection_ids and increment the
-          counter only for a newly accepted selection.
-        - state/audit/<batch-id>/<item-id>/<selection-id>.json: write one immutable JSON
+          and updated_at. For an ordinary first acceptance, add selection_id and
+          increment the counter once. For repair_counted, atomically replace the
+          superseded selection marker with the replacement selection without changing
+          accepted_item_count.
+        - .omp-swarm/spec-to-code/state/audit/<batch-id>/<item-id>/<selection-id>.json:
+          write one immutable JSON
           object with schema_revision, batch_id, selection_id, item_id,
           specification_fingerprint, input_fingerprint, output_fingerprint, status
           ACCEPTED, item_review{path,sha256,decision}, phase_reports[{path,sha256}],
@@ -194,35 +223,51 @@ swarm:
           accepted_deviation_ids[], changed_files[{path,sha256}],
           requirement_coverage[{criterion_id,evidence}], predecessor_revalidations[],
           generated_at, and content_sha256.
-        - run/reports/item-advance.json: write schema_revision, batch_id, selection_id,
-          item_id, validated_hashes[], acceptance_event_path, acceptance_event_sha256,
+        - .omp-swarm/spec-to-code/run/reports/item-advance.json: write schema_revision,
+          batch_id, selection_id, supersedes_selection_id, repair_counted, item_id,
+          validated_hashes[], acceptance_event_path, acceptance_event_sha256,
           accepted_item_count_before, accepted_item_count_after, counted_now,
-          remaining_dependency_ready_item_ids[], signal, status (ACCEPTED or BLOCKED),
-          reason, and generated_at.
-        - run/signals/process-one-item.txt: write exactly one line containing NEXT_ITEM,
+          replaced_counted_selection_id, remaining_dependency_ready_item_ids[], signal,
+          status (ACCEPTED, SKIPPED, or BLOCKED), reason, and generated_at.
+        - .omp-swarm/spec-to-code/run/signals/process-one-item.txt: write exactly one
+          line containing NEXT_ITEM,
           BATCH_COMPLETE, or BLOCKED, followed by a newline and no other text.
 
         ### Task
         1. After implementation_phase continues, reacquire sole ledger ownership and
            take sole active-batch ownership until the round settles.
-        2. Match batch, selection, item, input/output, review, phase-control, ownership,
-           and current source hashes before mutation.
-        3. Build the acceptance event with schema revision; batch, selection, and item
+        2. For matching NO_WORK and four continued phase controls ending in a SKIPPED
+           item review, confirm no pending, impacted, reopened, or in-progress item
+           exists; leave the ledger, acceptance history, counted selections, and counter
+           unchanged; write a SKIPPED advance report and BATCH_COMPLETE; and create no
+           acceptance event.
+        3. Otherwise match batch, selection, item, input/output, review, phase-control,
+           ownership, and current source hashes before mutation.
+        4. Match supersedes_selection_id and repair_counted across the current-item
+           handoff and ledger before settlement; preserve them on BLOCKED.
+        5. Build the acceptance event with schema revision; batch, selection, and item
            IDs and fingerprints; ACCEPTED status; item-review decision and hash; every
            phase report and control hash; approved method and observed behavior;
            accepted-deviation IDs; exact changed paths and source hashes; requirement
            coverage; transferred predecessor criteria; generated_at; and content hash.
-        4. Store the event's exact path and hash in the ledger. Identical existing
-           content is success; conflicting content is BLOCKED.
-        5. Mark the item ACCEPTED and increment accepted_item_count exactly once only
-           when all four phase controls continued and end-to-end review passed. Record
-           the counted selection ID.
-        6. Write NEXT_ITEM only when dependency-ready work remains and
+        6. Require a fresh event path for a replacement selection. Store its exact path
+           and hash in the ledger; identical existing content is idempotent success and
+           conflicting content is BLOCKED.
+        7. Mark the item ACCEPTED only when all four phase controls continued and
+           end-to-end review passed. Increment accepted_item_count exactly once for a
+           never-counted item. For repair_counted, atomically set the superseded
+           history record's superseded_by_selection_id to the replacement selection,
+           replace the superseded counted selection ID with the replacement without
+           changing the counter, then clear the ledger's pending
+           supersedes_selection_id and repair_counted. Preserve pending lineage unless
+           the complete settlement succeeds.
+        8. Write NEXT_ITEM only when dependency-ready work remains and
            accepted_item_count is below item_limit. Write BATCH_COMPLETE when no work
            remains or the limit is reached.
 
         ### Outputs
-        - One immutable acceptance event for an accepted selection.
+        - One immutable acceptance event for an accepted selection, or no event for
+          NO_WORK.
         - Reconciled ledger and active-batch state.
         - One item-advance report.
         - One bounded repeat signal.
@@ -232,7 +277,8 @@ swarm:
           inputs, or runtime-owned .swarm_* paths.
         - Do not accept or increment on missing, stale, failed, or BLOCKED evidence.
           Record the blocker and write BLOCKED instead.
-        - Increment accepted_item_count once per selection ID, never once per retry.
+        - Keep accepted_item_count stable across a counted repair; otherwise increment it
+          once per newly accepted item, never once per retry.
         - Replace mutable owned files atomically; never replace a conflicting immutable
           acceptance event.
 

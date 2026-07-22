@@ -14,13 +14,20 @@ description: Use when auditing, approving, or debugging an OMP swarm YAML DAG, e
 ## Evidence First
 
 1. Read the complete root YAML and every import.
-2. Run and record the exact command, result, and waves:
+2. Run and record validation, result, and waves:
 
 ```bash
 omp-swarm validate path/to/swarm.yaml
 ```
 
-If unavailable, say `Not run`.
+For a routed root, also run and record the authenticated routing plan, selected aliases,
+concrete models, subtree/root estimates, catalog freshness, and assumptions:
+
+```bash
+omp-swarm plan-models path/to/swarm.yaml
+```
+
+If either required command is unavailable, say `Not run` with the exact blocker.
 
 3. Resolve `swarm.workspace` from the root YAML directory. Verify project anchors and inspect only named project paths needed to check task, command, and ownership claims.
    If current-run DAG artifacts exist, inspect the exact handoffs, reports, and
@@ -78,7 +85,10 @@ convergent.
 - `P1`: likely nondeterminism, stale evidence, blind retry, unverifiable acceptance, material contract gap, or unjustified cost.
 - `P2`: clarity, redundancy, maintainability, or minor cost without demonstrated wrong behavior.
 
-Verdict: `REJECT` for validation failure or `P0`; `CHANGES REQUIRED` for `P1`; `APPROVE` only after successful validation with no `P0/P1`; `UNVERIFIABLE` when required YAML/imports or validator access are missing.
+Verdict: `REJECT` for validation failure or `P0`; `CHANGES REQUIRED` for `P1`;
+`APPROVE` only after successful validation, successful authenticated model planning for
+a routed DAG, and no `P0/P1`; `UNVERIFIABLE` when required YAML/imports, validator
+access, or routed-model resolution is missing.
 
 One finding covers one defect and cites an exact node, field, edge, wave, command, or path. Do not inflate severity.
 
@@ -87,7 +97,8 @@ One finding covers one defect and cites an exact node, field, edge, wave, comman
 Return, in order:
 
 1. **Verdict** — decisive reason.
-2. **Validation** — command, result, waves.
+2. **Validation and routing** — validation command/result/waves; for routed DAGs,
+   `plan-models` result, selections, estimates, freshness, and assumptions.
 3. **Workspace and ownership** — resolved path, same-wave writers.
 4. **Findings** — descending severity; each has `Location`, `Evidence`, `Runtime impact`, `Correction owner/restart reachability`, and `Smallest correction`.
 5. **Confirmed strengths** — evidence worth preserving.

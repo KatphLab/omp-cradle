@@ -28,11 +28,15 @@ swarm:
         - Current-item and cited requirements.
         - Accepted contract source and contract-review artifacts.
         - Current project testing policy and public behavior.
-        - Exact revision-1 test-approval input.
+        - Exact revision-1
+          .omp-swarm/spec-to-code/input/test-approval.json.
         - Only matching behavior-plan or later item-review deltas.
+        - .omp-swarm/spec-to-code/state/approval-pauses/<item-id>.json and its
+          content-addressed plan_snapshot_path when a prior run requires approval.
 
         ### Files to touch
-        - run/handoffs/test-plan.json: write schema_revision, batch_id, selection_id,
+        - .omp-swarm/spec-to-code/run/handoffs/test-plan.json: write schema_revision,
+          batch_id, selection_id,
           item_id, requirement_id, specification_fingerprint, input_fingerprint,
           contract_plan_sha256, contract_review_sha256, method
           project-native-reproduction, scenarios[], execution_design, exclusions[],
@@ -42,7 +46,8 @@ swarm:
           state_transition, failure_case, and evidence_required[].
           execution_design contains harness, artifact_kind, artifact_paths[],
           invocation, cwd, environment_constraints[], and cleanup.
-        - run/reports/test-plan.json: write schema_revision, batch_id, selection_id,
+        - .omp-swarm/spec-to-code/run/reports/test-plan.json: write schema_revision,
+          batch_id, selection_id,
           item_id, input_fingerprint, contract_plan_sha256, test_plan_path,
           test_plan_sha256, plan_fingerprint, approval_id, approval_match,
           mapped_criterion_ids[], unmapped_criterion_ids[], matched_delta_ids[], status
@@ -51,14 +56,17 @@ swarm:
 
         ### Task
         1. Match batch, selection, item, contract, source, and approval fingerprints.
-        2. Map every logical criterion to an observable scenario, boundary, state
+        2. When a matching approval pause names a durable plan snapshot, validate its
+           item, specification, contract, method, content hash, and plan fingerprint,
+           then reproduce that exact approved plan in the current-run handoff.
+        3. Map every logical criterion to an observable scenario, boundary, state
            transition, failure, and expected result.
-        3. Use the generic method identifier project-native-reproduction.
-        4. Discover the concrete harness and invocation from current project policy and
+        4. Use the generic method identifier project-native-reproduction.
+        5. Discover the concrete harness and invocation from current project policy and
            project-owned configuration.
-        5. Exclude cosmetic, source-text, field-existence-only, mock-plumbing, and
+        6. Exclude cosmetic, source-text, field-existence-only, mock-plumbing, and
            framework-incidental assertions.
-        6. On NO_WORK, write current SKIPPED artifacts.
+        7. On NO_WORK, write current SKIPPED artifacts.
 
         ### Outputs
         - One current behavior handoff and matching report.
@@ -74,9 +82,15 @@ swarm:
         - Replace both owned artifacts atomically.
 
         ### Retry and failure
-        - Preserve already approved scenarios unless current evidence or a matching
-          review delta requires change.
-        - Report BLOCKED for unsafe or unapproved methods.
+
+        - Reproduce an approved snapshot exactly only while its specification, contract,
+          current project-policy and harness evidence, and matching review deltas remain
+          compatible.
+        - When current evidence or a matching delta invalidates the snapshot, preserve
+          the immutable snapshot and write a new current-run plan with a new fingerprint
+          so the reviewer can persist a replacement approval binding.
+        - Report BLOCKED when a required snapshot is missing, malformed, hash-mismatched,
+          or conflicts with current authority, or when a method is unsafe or unapproved.
       reports_to: [review_behavior_plan]
 
     review_behavior_plan:
@@ -97,12 +111,14 @@ swarm:
         ### Inputs
         - Current source, requirements, accepted contracts, and project policy.
         - Current-item and test-plan artifacts.
-        - Exact revision-1 input/test-approval.json.
+        - Exact revision-1 .omp-swarm/spec-to-code/input/test-approval.json.
         - Matching behavior-plan and later item-review deltas.
-        - Existing state/approval-pauses/<item-id>.json when present.
+        - Existing .omp-swarm/spec-to-code/state/approval-pauses/<item-id>.json and its
+          content-addressed plan snapshot when present.
 
         ### Files to touch
-        - run/reports/test-plan-review.json: write schema_revision, batch_id,
+        - .omp-swarm/spec-to-code/run/reports/test-plan-review.json: write schema_revision,
+          batch_id,
           selection_id, item_id, input_fingerprint, contract_review_sha256,
           test_plan_sha256, plan_fingerprint, approval_match{approval_id,
           requirement_id,spec_fingerprint,plan_fingerprint,allowed_methods,matched,
@@ -110,14 +126,20 @@ swarm:
           findings[], reason, and generated_at. Each findings[] record contains
           finding_id, criterion_id, severity, evidence[], required_mutation, owner,
           expected_observable_result, and status.
-        - run/signals/behavior-plan-phase.control.yaml: write action and reason. For
+        - .omp-swarm/spec-to-code/run/signals/behavior-plan-phase.control.yaml: write
+          action and reason. For
           restart, also write target as exactly select_or_resume_item, contract_phase,
           or behavior_plan_phase. For continue or fail, omit target.
-        - state/approval-pauses/<item-id>.json: write schema_revision, item_id,
-          requirement_id, specification_fingerprint, contract_fingerprint,
-          plan_fingerprint, method_ids[], observed_approval_fingerprints[],
-          status (APPROVAL_REQUIRED or RESOLVED), approval_id, reason, created_at, and
-          updated_at. Preserve created_at when resolving an existing pause.
+        - .omp-swarm/spec-to-code/state/approval-pauses/<item-id>.json: write
+          schema_revision, item_id, requirement_id, specification_fingerprint,
+          contract_fingerprint, plan_fingerprint, plan_snapshot_path,
+          plan_snapshot_sha256, superseded_plan_fingerprints[], method_ids[],
+          observed_approval_fingerprints[], status (APPROVAL_REQUIRED or RESOLVED),
+          approval_id, reason, created_at, and updated_at. Preserve created_at when
+          resolving or replacing an existing pause.
+        - .omp-swarm/spec-to-code/state/approval-plans/<item-id>/<plan-fingerprint>.json:
+          on APPROVAL_REQUIRED or replacement of an invalid prior snapshot, write an
+          immutable exact copy of the reviewed test plan.
 
         ### Task
         1. Match approval only when requirement and specification fingerprints match,
@@ -129,25 +151,36 @@ swarm:
         3. Before failing solely for missing or mismatched approval, write
            APPROVAL_REQUIRED with schema revision; IDs; specification, contract, and
            plan fingerprints; observed approval fingerprints; and method IDs.
-        4. Replace a matching prior pause with RESOLVED.
-        5. Continue on accepted evidence, including valid NO_WORK as SKIPPED.
-        6. Restart select_or_resume_item for interpretation defects, contract_phase for
+        4. Before publishing APPROVAL_REQUIRED, persist the exact reviewed plan at its
+           content-addressed durable path and bind the pause to that path and hash.
+        5. When current evidence invalidates a prior snapshot, preserve that immutable
+           file, append its fingerprint to superseded_plan_fingerprints[], persist the
+           new snapshot, and bind the pause to the new fingerprint, path, and hash. Set
+           the pause to RESOLVED and continue when the new plan has matching approval
+           under step 1; otherwise set it to APPROVAL_REQUIRED.
+        6. Continue on accepted evidence, including valid NO_WORK as SKIPPED.
+        7. Restart select_or_resume_item for interpretation defects, contract_phase for
            contract causes, or behavior_plan_phase for plan or review defects.
 
         ### Outputs
         - One current test-plan review.
         - One valid parent control decision.
         - When approval state changes, one durable approval-pause record.
+        - On APPROVAL_REQUIRED or prior-snapshot replacement, one immutable durable plan
+          snapshot bound by the pause.
 
         ### Rules
-        - Do not edit plans, contracts, source, ledger, operator inputs,
-          specifications, or runtime-owned .swarm_* paths.
+        - Do not edit the current-run test plan, contracts, source, ledger, operator
+          inputs, specifications, or runtime-owned .swarm_* paths. The immutable
+          approval snapshot listed under Files to touch is the only plan this reviewer
+          may create.
         - The durable pause is evidence of missing approval, not approval itself.
-        - Replace owned files atomically.
+        - Replace mutable owned files atomically; never replace a conflicting immutable
+          plan snapshot.
 
         ### Retry and failure
-        - For approval failure, write the pause and fail; a later normal run owns the
-          bounded approval-only resume.
+        - For approval failure, write the durable plan snapshot and pause before failing;
+          a later normal run owns the bounded approval-only resume.
         - Fail for forbidden work, irreconcilable authority, out-of-scope correction,
           no progress, or exhausted limits.
         - Every restart must name one allowed parent target, new evidence, and the
