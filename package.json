@@ -47,7 +47,6 @@
     "extensions": [
       "./src/commit-command/index.ts",
       "./src/council/index.ts",
-      "./src/hide-builtins/index.ts",
       "./src/swarm/index.ts",
       "./src/system-prompt/index.ts"
     ],
