@@ -1,6 +1,6 @@
 # Project Source-Change DAG Template
 
-Read this complete file only when a concrete composition helps. This is a TypeScript-project example, not the field reference. Replace the request path, project anchors, bounded source scope, and project check command before use.
+Use only for the exact complete-template match selected in `SKILL.md`; do not also load equivalent node references.
 
 Save this example as `.omp/source-change.yaml` inside the project root. Because paths resolve from the YAML location, `workspace: ..` selects the existing project.
 
@@ -19,54 +19,148 @@ swarm:
       type: agent
       role: Project workspace guard
       task: |
-        Work in the existing project workspace. Verify that package.json and src/
-        identify the intended TypeScript project. Never modify or delete project
-        source, user changes, .git, or any .swarm_* directory.
+        Outcome:
+        - Establish the intended TypeScript workspace and a clean DAG-owned run
+          directory without changing project work.
 
-        If the anchors are valid, remove only .omp-swarm/source-change/run/,
-        recreate its handoffs/, reports/, and signals/ directories, then write
-        .omp-swarm/source-change/run/signals/prepare.control.yaml with exactly:
-        action: continue
-        reason: project anchors verified and run directory prepared
+        Inputs / read:
+        - Read package.json and inspect src/ as project anchors.
+        - If either anchor is missing or malformed, preserve all existing files
+          and emit the fail decision defined below.
 
-        If an anchor is missing, do not delete anything. Write the same control
-        file with action: fail and a safe reason.
+        Scope:
+        - Inspect: package.json, src/, and the literal
+          .omp-swarm/source-change/run/ path.
+        - May edit: only .omp-swarm/source-change/run/.
+        - Must not edit: project source, user changes, .git, or .swarm_*.
+
+        Decision rules:
+        - READY when both anchors identify the intended project and the run path
+          resolves safely inside the workspace; otherwise BLOCKED.
+
+        Acceptance / verification:
+        - READY requires recreated handoffs/, reports/, and signals/ directories
+          and one valid control signal.
+
+        Outputs / handoffs:
+        - Overwrite signals/prepare.control.yaml as control YAML for the runtime.
+        - Include action and reason; failure to write it fails this node.
+
+        Control / correction:
+        - Write action: continue only for READY.
+        - Otherwise write action: fail with a safe reason and no target.
+
+        Retry / failure:
+        - Recheck anchors before cleanup; make directory recreation idempotent.
+        - Preserve project files and existing inputs on every failure.
       reports_to: [investigate]
       control:
         signal: .omp-swarm/source-change/run/signals/prepare.control.yaml
         allowed_restart_targets: [prepare]
+      resume:
+        id: prepare
+        contract_version: 1
+        state_version: 1
+        policy: preserve
 
     investigate:
       type: agent
       role: Source change investigator
       task: |
-        Read docs/feature-request.md. Inspect only package.json, relevant project
-        guidance, and the bounded src/ module implicated by the request. Do not
-        edit project files. Write
-        .omp-swarm/source-change/run/handoffs/implementation-plan.md containing:
-        the observable behavior, exact source/config/test paths the implementer
-        may edit, paths it must not edit, existing conventions to reuse, and the
-        focused verification command.
-        Missing target source or incomplete implementation is recorded in a
-        complete plan and does not block investigation. Block only when the
-        request or required authority is missing, malformed, or contradictory.
+        Outcome:
+        - Produce an implementation plan that authorizes the requested source
+          change without editing project files.
+
+        Inputs / read:
+        - Read docs/feature-request.md as authority.
+        - Read package.json, applicable project guidance, and the bounded src/
+          module implicated by the request.
+        - Missing or contradictory authority is BLOCKED; missing target
+          implementation is a READY finding.
+
+        Scope:
+        - Inspect: package.json, applicable guidance, and the bounded src/ module.
+        - May edit: only
+          .omp-swarm/source-change/run/handoffs/implementation-plan.md.
+        - Must not edit: project files, sibling artifacts, user work, or .swarm_*.
+
+        Decision rules:
+        - READY when the request and authority permit an exact bounded plan.
+        - BLOCKED only for missing, malformed, or contradictory authority.
+
+        Acceptance / verification:
+        - Confirm every editable path is inside the bounded module and every
+          requested behavior maps to an observable acceptance case.
+
+        Outputs / handoffs:
+        - Overwrite implementation-plan.md as Markdown for implement.
+        - Include status, observable_behavior, owned_paths, forbidden_paths,
+          conventions, acceptance_cases, and focused_verification_command.
+        - On BLOCKED, include actionable blockers and no editable paths.
+
+        Control / correction:
+        - No control signal.
+
+        Retry / failure:
+        - Re-read current authority and overwrite stale plan evidence atomically.
+        - Preserve every project file on failure.
       waits_for: [prepare]
       reports_to: [implement]
+      resume:
+        id: investigate
+        contract_version: 1
+        state_version: 1
+        policy: inputs-unchanged
 
     implement:
       type: agent
       role: TypeScript feature implementer
       task: |
-        Read .omp-swarm/source-change/run/handoffs/implementation-plan.md and, if
-        present, .omp-swarm/source-change/run/reports/review.md. Inspect the
-        current project files named by the plan. Implement or repair the feature
-        directly in those real project paths; do not create staged source copies.
-        Preserve unrelated user changes and do not edit paths outside the plan.
-        Make the change idempotent when prior edits already exist. Write a concise
-        implementation summary to
-        .omp-swarm/source-change/run/handoffs/implementation.md.
+        Outcome:
+        - Implement or repair every acceptance case authorized by the current
+          implementation plan in the real project tree.
+
+        Inputs / read:
+        - Read implementation-plan.md from investigate and review.md from review
+          when present.
+        - Require READY status, owned_paths, forbidden_paths, acceptance_cases,
+          and focused_verification_command.
+        - On missing or malformed plan, write the failure handoff and make no
+          source edit.
+
+        Scope:
+        - Inspect: current project files named by implementation-plan.md.
+        - May edit: only owned_paths and
+          .omp-swarm/source-change/run/handoffs/implementation.md.
+        - Must not edit: forbidden_paths, sibling-owned files, unrelated modules,
+          user work, staged source copies, or .swarm_*.
+
+        Decision rules:
+        - Not applicable.
+
+        Acceptance / verification:
+        - Run focused_verification_command.
+        - Every acceptance case must pass without regressing preserved behavior.
+
+        Outputs / handoffs:
+        - Overwrite implementation.md as Markdown for review.
+        - Include changed_paths, behavior_summary, verification_command,
+          verification_exit, and unresolved_findings.
+
+        Control / correction:
+        - No control signal.
+
+        Retry / failure:
+        - Re-read current source and latest review; prior edits remain.
+        - Preserve already-correct and unrelated work; apply only missing fixes.
+        - On failure, record actionable safe diagnostics in implementation.md.
       waits_for: [investigate]
       reports_to: [check]
+      resume:
+        id: implement
+        contract_version: 1
+        state_version: 1
+        policy: inputs-unchanged
 
     check:
       type: bash
@@ -78,27 +172,67 @@ swarm:
       cwd: .
       waits_for: [implement]
       reports_to: [review]
+      resume:
+        id: check
+        contract_version: 1
+        state_version: 1
+        policy: inputs-unchanged
 
     review:
       type: agent
       role: Independent source and behavior reviewer
       task: |
-        Read the implementation plan, implementation summary, and check report.
-        Inspect the actual changed project source; do not review staged copies and
-        do not edit project files. Verify the requested behavior, project
-        conventions, path ownership, and CHECK_EXIT value. Write findings to
-        .omp-swarm/source-change/run/reports/review.md.
+        Outcome:
+        - Independently accept the current source change or emit one reachable
+          correction/failure decision.
 
-        If the source and checks pass, write
-        .omp-swarm/source-change/run/signals/review.control.yaml with action:
-        continue and a reason. If a defect remains that `implement` is authorized
-        to correct within its declared project and handoff paths, write action:
-        restart, target: implement, and a concrete reason. Otherwise write action:
-        fail with the unreachable correction owner or impossible prerequisite.
+        Inputs / read:
+        - Read implementation-plan.md from investigate, implementation.md from
+          implement, and reports/check.txt from check.
+        - Require the plan/summary fields named above and one CHECK_EXIT marker.
+        - Missing, stale, duplicate, or malformed evidence cannot pass.
+
+        Scope:
+        - Inspect: actual current source paths named by the plan and the three
+          declared inputs.
+        - May edit: reports/review.md and signals/review.control.yaml.
+        - Must not edit: project files, upstream handoffs, user work, or .swarm_*.
+
+        Decision rules:
+        - ACCEPT only when source behavior, conventions, ownership, and
+          CHECK_EXIT=0 satisfy every acceptance case.
+        - REJECT with restart only when implement owns the required mutation.
+        - Otherwise fail for an unreachable owner or impossible prerequisite.
+
+        Acceptance / verification:
+        - Reproduce the highest-risk acceptance behavior against current source
+          and validate the check marker and ownership evidence.
+
+        Outputs / handoffs:
+        - Overwrite reports/review.md as Markdown with verdict, findings,
+          evidence, required_mutation, correction_owner, and restart_target.
+        - Overwrite signals/review.control.yaml as one runtime control decision.
+        - Failure to produce either valid output fails this node.
+
+        Control / correction:
+        - Continue only for ACCEPT.
+        - Restart target implement only for a confirmed owned correction that the
+          implement -> check -> review suffix can make false.
+        - Fail for missing evidence, unsafe scope, or unreachable correction.
+
+        Retry / failure:
+        - Re-read current source and all current evidence; no files roll back.
+        - Supersede stale findings and overwrite both outputs atomically.
+        - Preserve project and upstream files on failure.
       waits_for: [check]
       control:
         signal: .omp-swarm/source-change/run/signals/review.control.yaml
         allowed_restart_targets: [implement]
+      resume:
+        id: review
+        contract_version: 1
+        state_version: 1
+        policy: never
 ```
 
 Before adapting this topology, enumerate every possible review rejection reason
@@ -115,4 +249,4 @@ Validate after adapting the template:
 omp-swarm validate .omp/source-change.yaml
 ```
 
-Do not add imports, pipeline iterations, repeat, cache, or extra agents unless the workflow actually needs them; read the corresponding complete reference file first.
+Do not add imports, pipeline iterations, repeat, cache, or extra agents unless the workflow needs them; return to the `SKILL.md` router and load only the newly matched reference.

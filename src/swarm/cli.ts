@@ -19,6 +19,10 @@ import {
   preflightSwarmDefinition,
 } from './swarm/preflight'
 import { renderSwarmProgress } from './swarm/render'
+import {
+  formatRestartDecision,
+  parseRestartOverrides,
+} from './swarm/restart-options'
 import type { SwarmDefinition } from './swarm/schema'
 import {
   createInitializedStateTracker,
@@ -33,7 +37,7 @@ function writeLine(message = ''): void {
 function usageLines(): string[] {
   return [
     'Usage: omp-swarm <path-to-yaml>',
-    '       omp-swarm restart <path-to-yaml>',
+    '       omp-swarm restart <path-to-yaml> [--reuse <nodes>] [--rerun <nodes>] [--from <node>]',
     '       omp-swarm plan-models <path-to-yaml>',
     '       omp-swarm validate <path-to-yaml>',
     '       omp-swarm --help',
@@ -45,6 +49,9 @@ function usageLines(): string[] {
     '',
     'Options:',
     '  -h, --help               Show this help',
+    '      --reuse <nodes>      Comma-separated completed nodes to reuse when hard invariants pass',
+    '      --rerun <nodes>      Comma-separated nodes to rerun with their dependants',
+    '      --from <node>         Rerun one node and every transitive dependant',
   ]
 }
 
@@ -99,7 +106,8 @@ class TerminalProgressRenderer {
   }
 }
 
-const [commandOrPath, maybePath] = process.argv.slice(2)
+const cliArguments = process.argv.slice(2)
+const [commandOrPath, maybePath] = cliArguments
 if (!commandOrPath) {
   writeUsageError()
   process.exit(1)
@@ -125,6 +133,15 @@ if (!yamlPath) {
 const resolvedPath = path.resolve(yamlPath)
 writeLine(`Reading: ${resolvedPath}`)
 try {
+  const restartOverrides = isRestartCommand
+    ? parseRestartOverrides(cliArguments.slice(2))
+    : {}
+  if (
+    !isRestartCommand &&
+    cliArguments.length > (isValidateCommand || isPlanModelsCommand ? 2 : 1)
+  ) {
+    throw new Error('Restart options are only valid with the restart command')
+  }
   const swarmDefinition = await loadSwarmDefinitionFile(resolvedPath)
 
   writeLine(`Swarm: ${swarmDefinition.name}`)
@@ -219,10 +236,21 @@ try {
   writeLine(`Workspace: ${workspace}`)
 
   const restartPlan = isRestartCommand
-    ? await createRestartStateTracker(workspace, swarmDefinition, routingPlan)
+    ? await createRestartStateTracker(
+        workspace,
+        swarmDefinition,
+        routingPlan,
+        restartOverrides,
+      )
     : undefined
   if (restartPlan !== undefined) {
     writeLine(restartPlan.message)
+    for (const { node, decision } of restartPlan.decisions) {
+      writeLine(`  ${node.padEnd(16)} ${formatRestartDecision(decision)}`)
+    }
+    if (restartPlan.manifestPath !== undefined) {
+      writeLine(`Restart manifest: ${restartPlan.manifestPath}`)
+    }
     if (restartPlan.alreadyCompleted) {
       writeLine(renderSwarmProgress(restartPlan.stateTracker.state).join('\n'))
       writeLine(`State saved to: ${restartPlan.stateTracker.swarmDir}`)
@@ -245,6 +273,8 @@ try {
   const modelRegistry =
     routedModelRegistry ??
     (authStorage === undefined ? undefined : new ModelRegistry(authStorage))
+  if (routedModelRegistry === undefined && modelRegistry !== undefined)
+    await modelRegistry.refresh('online-if-uncached')
   const settings =
     routedSettings ??
     (containsAgents

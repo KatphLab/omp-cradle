@@ -9,6 +9,13 @@ interface RawSwarmNodeControlConfig {
   allowed_restart_targets?: unknown
 }
 
+interface RawSwarmNodeResumeConfig {
+  id?: unknown
+  contract_version?: unknown
+  state_version?: unknown
+  policy?: unknown
+}
+
 interface RawModelUsageEstimateConfig {
   input_tokens?: unknown
   output_tokens?: unknown
@@ -40,6 +47,7 @@ interface RawSwarmAgentConfig {
   model?: unknown
   tools?: unknown
   control?: unknown
+  resume?: unknown
   workload?: unknown
   [key: string]: unknown
 }
@@ -50,6 +58,7 @@ interface RawSwarmBashConfig {
   output_path?: unknown
   cwd?: unknown
   reports_to?: unknown
+  resume?: unknown
   waits_for?: unknown
   [key: string]: unknown
 }
@@ -67,6 +76,7 @@ interface RawSwarmGraphConfig {
   swarm?: unknown
   waits_for?: unknown
   reports_to?: unknown
+  resume?: unknown
   repeat?: unknown
   control?: unknown
   [key: string]: unknown
@@ -126,6 +136,15 @@ export interface SwarmNodeControl {
   allowedRestartTargets: string[]
 }
 
+type SwarmResumePolicy = 'preserve' | 'inputs-unchanged' | 'never' | 'strict'
+
+export interface SwarmResumeContract {
+  id: string
+  contractVersion: number
+  stateVersion: number
+  policy: SwarmResumePolicy
+}
+
 export type SwarmNodeType = 'agent' | 'bash' | 'graph'
 
 export interface SwarmNodeBase {
@@ -133,6 +152,7 @@ export interface SwarmNodeBase {
   type: SwarmNodeType
   reportsTo: string[]
   waitsFor: string[]
+  resume: SwarmResumeContract
 }
 
 export interface SwarmAgent extends SwarmNodeBase {
@@ -189,6 +209,12 @@ export interface SwarmDefinition {
   sourceDir?: string
 }
 
+const VALID_RESUME_POLICIES: readonly SwarmResumePolicy[] = [
+  'preserve',
+  'inputs-unchanged',
+  'never',
+  'strict',
+]
 const VALID_MODES: readonly SwarmMode[] = ['pipeline', 'parallel', 'sequential']
 const VALID_SWARM_NAME = /^[\w.-]+$/
 const VALID_ROUTING_QUALITIES: readonly ModelRoutingQuality[] = [
@@ -387,6 +413,7 @@ function parseAgentNode(name: string, config: RawSwarmAgentConfig): SwarmAgent {
     task: task.trim(),
     reportsTo: stringArray(config.reports_to),
     waitsFor: stringArray(config.waits_for),
+    resume: parseNodeResume(name, config.resume),
   }
   const tools = parseAgentTools(name, config.tools)
   if (tools !== undefined) agent.tools = tools
@@ -403,6 +430,71 @@ function parseAgentNode(name: string, config: RawSwarmAgentConfig): SwarmAgent {
     agent.control = parseNodeControl('Agent', name, config.control)
   }
   return agent
+}
+
+function parseNodeResume(name: string, value: unknown): SwarmResumeContract {
+  if (value === undefined) {
+    return {
+      id: name,
+      contractVersion: 1,
+      stateVersion: 1,
+      policy: 'preserve',
+    }
+  }
+  if (!isRecord(value)) {
+    throw new Error(`Node '${name}': 'resume' must be an object`)
+  }
+  const config = value as RawSwarmNodeResumeConfig
+  const id =
+    config.id === undefined
+      ? name
+      : requireString(
+          config.id,
+          `Node '${name}': 'resume.id' must be a non-empty string`,
+        ).trim()
+  if (id.length === 0) {
+    throw new Error(`Node '${name}': 'resume.id' must be a non-empty string`)
+  }
+  const contractVersion = parseResumeVersion(
+    name,
+    'contract_version',
+    config.contract_version,
+  )
+  const stateVersion = parseResumeVersion(
+    name,
+    'state_version',
+    config.state_version,
+  )
+  const policy = config.policy ?? 'preserve'
+  if (!isResumePolicy(policy)) {
+    throw new Error(
+      `Node '${name}': 'resume.policy' must be one of: ${VALID_RESUME_POLICIES.join(', ')}`,
+    )
+  }
+  return { id, contractVersion, stateVersion, policy }
+}
+
+function parseResumeVersion(
+  name: string,
+  field: 'contract_version' | 'state_version',
+  value: unknown,
+): number {
+  if (value === undefined) return 1
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new Error(
+      `Node '${name}': 'resume.${field}' must be a positive integer`,
+    )
+  }
+  return value
+}
+
+function isResumePolicy(value: unknown): value is SwarmResumePolicy {
+  return (
+    value === 'preserve' ||
+    value === 'inputs-unchanged' ||
+    value === 'never' ||
+    value === 'strict'
+  )
 }
 
 function parseAgentTools(name: string, value: unknown): string[] | undefined {
@@ -447,6 +539,7 @@ function parseBashNode(
     outputPath,
     reportsTo: stringArray(config.reports_to),
     waitsFor: stringArray(config.waits_for),
+    resume: parseNodeResume(name, config.resume),
   }
   if (typeof config.cwd === 'string') {
     const cwd = config.cwd.trim()
@@ -469,6 +562,7 @@ function parseGraphNode(
     type: 'graph',
     reportsTo: stringArray(config.reports_to),
     waitsFor: stringArray(config.waits_for),
+    resume: parseNodeResume(name, config.resume),
     ...parseGraphSource(name, config),
   }
   applyGraphOptions(name, config, graph)
@@ -725,6 +819,7 @@ export function validateSwarmDefinition(
   validateModel(swarmDefinition.model, 'swarm.model', errors)
   validateRestartPolicy(swarmDefinition, errors)
   validateNodeReferences(swarmDefinition, nodeNames, errors)
+  validateResumeIdentities(swarmDefinition, errors)
   validateTargetCount(swarmDefinition, errors)
   validateConcurrency(swarmDefinition, errors)
   validateModelRoutingShape(swarmDefinition.modelRouting, errors)
@@ -733,6 +828,23 @@ export function validateSwarmDefinition(
   }
 
   return errors
+}
+
+function validateResumeIdentities(
+  swarmDefinition: SwarmDefinition,
+  errors: string[],
+): void {
+  const owners = new Map<string, string>()
+  for (const [name, node] of swarmDefinition.nodes) {
+    const existing = owners.get(node.resume.id)
+    if (existing === undefined) {
+      owners.set(node.resume.id, name)
+      continue
+    }
+    errors.push(
+      `Nodes '${existing}' and '${name}' use the same resume.id '${node.resume.id}'`,
+    )
+  }
 }
 
 function validateModelRoutingShape(

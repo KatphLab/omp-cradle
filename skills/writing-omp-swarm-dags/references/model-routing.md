@@ -1,6 +1,6 @@
 # Model Routing
 
-Read this complete file whenever a DAG declares `swarm.model_routing` or an agent `workload`.
+Use only when `SKILL.md` routes here. Return to its table before opening any linked reference.
 
 ## Opt-in contract
 
@@ -37,6 +37,8 @@ While routing is enabled, `swarm.model`, agent `model`, and `allowed_aliases` ac
 
 An explicit agent model wins. For `planning`, `review`, `design`, and `vision`, an omitted agent model retains the corresponding `pi/plan`, `pi/advisor`, `pi/designer`, or `pi/vision` specialty alias even when that graph declares `swarm.model`. For generic profiles, the graph's `swarm.model` is used when present; otherwise the planner ranks eligible `pi/smol`, `pi/task`, `pi/default`, and `pi/slow` aliases by exposure-adjusted estimated cost after capability and quality filtering.
 
+Every unchanged agent with an implicit specialty model must retain that base alias in `allowed_aliases`; removing it makes the node unroutable.
+
 ## Workloads and usage
 
 ```yaml
@@ -50,7 +52,32 @@ implement:
       output_tokens: 10000
       cache_read_tokens: 20000
       cache_write_tokens: 8000
-  task: Implement the requested behavior.
+  task: |
+    Outcome:
+    - Implement the requested observable TypeScript behavior.
+
+    Inputs / read:
+    - Read the declared implementation plan and latest review evidence.
+
+    Scope:
+    - Inspect: paths named by the plan.
+    - May edit: only plan-owned project paths and the implementation report.
+    - Must not edit: sibling paths, unrelated work, or .swarm_*.
+
+    Decision rules:
+    - Not applicable.
+
+    Acceptance / verification:
+    - Run the plan's focused command and satisfy every acceptance case.
+
+    Outputs / handoffs:
+    - Overwrite the declared implementation report for its reviewer.
+
+    Control / correction:
+    - No control signal.
+
+    Retry / failure:
+    - Re-read current files; preserve prior correct and unrelated edits.
 ```
 
 Profiles express requirements, not model identities:

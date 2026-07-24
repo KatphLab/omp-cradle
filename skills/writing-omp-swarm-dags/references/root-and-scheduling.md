@@ -1,6 +1,6 @@
 # Root and Scheduling Reference
 
-Read this complete file for every new DAG. It owns root fields, dependency edges, execution modes, pipeline behavior, validation, and delivery evidence.
+Use only when `SKILL.md` routes here. Return to its table before opening any linked reference.
 
 ## Root Shape
 
@@ -26,8 +26,8 @@ swarm:
 | `target_count`   | no          | Integer `>= 1`; default `1`; values above `1` require `pipeline`.                                                                                                  |
 | `concurrency`    | yes         | Integer `>= 1`; maximum simultaneous agent nodes across the root and imported graphs. Bash nodes do not consume this budget.                                       |
 | `model`          | no          | Non-empty default model selector for agents declared in this graph. An agent-level model overrides it. Imported children use their own agent/graph model settings. |
-| `model_routing`  | no          | Opt-in cost-aware alias routing performed recursively before state initialization; read `model-routing.md`.                                                        |
-| `restart_policy` | conditional | Required in this graph when any local agent or graph declares `control`; read `control-and-recovery.md`.                                                           |
+| `model_routing`  | no          | Opt-in cost-aware alias routing; route through `SKILL.md` when changed.                                                                                            |
+| `restart_policy` | conditional | Required when local agent/graph control exists; route through `SKILL.md` when changed.                                                                             |
 | `nodes`          | yes         | Non-empty map of local node IDs to `agent`, `bash`, or `graph` definitions.                                                                                        |
 
 The runner resolves a relative workspace from the root YAML's directory and creates it if absent. `omp-swarm validate` does not create or inspect the workspace; project anchors need a workflow guard.

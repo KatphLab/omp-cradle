@@ -112,7 +112,11 @@ Use a new implementation layer only for a real dependency boundary:
 
 A shared file cannot belong to parallel writers. Assign exports, indexes, manifests, lockfiles, generated registries, and other convergence points to one later integration node. When two areas cannot be given disjoint paths, serialize them instead of relying on agents to avoid conflicts.
 
-Every modifying task should name its inspect scope, owned edit paths, forbidden sibling paths, focused verification, report path, idempotent retry behavior, and blocker behavior. It must inspect language-aware references before changing public symbols.
+Every modifying task must use the complete ordered `task: |` contract from
+`agent-nodes.md`, including bounded inspect/owned/forbidden paths, focused
+verification, exact producer/consumer reports, correction behavior, idempotent
+retry, and failure evidence. It must inspect language-aware references before
+changing public symbols.
 
 ### Separate audits by failure class
 
@@ -154,7 +158,12 @@ The restart target invalidates the residual node and all downstream acceptance n
 
 ## Structural YAML Skeleton
 
-This skeleton shows edges and contracts, not task detail. Expand every task using `agent-nodes.md`; replace commands and paths before validation.
+This skeleton shows topology, not deliverable task detail. Its compact task
+paragraphs are intentionally non-conforming placeholders. Before using it,
+replace every agent task with the complete ordered `task: |` sections from
+`agent-nodes.md`, add each Bash/graph human-reviewable contract, and choose every
+node's resume identity, versions, and policy. Never deliver or validate the
+unexpanded skeleton.
 
 ```yaml
 swarm:
@@ -396,14 +405,15 @@ On `final_decision -> restart residual_repair`, only waves 8-11 rerun. Project f
 5. Replace the generic implementation shape with the minimum real dependency layers.
 6. Assign all shared integration paths to one serialized writer.
 7. Give every handoff, report, signal, and check output one exact DAG-owned path and one writer.
-8. Define focused verification for each writer without treating self-verification as approval.
-9. Select independent audit lenses based on distinct defect classes.
-10. Bound residual ownership; do not let it expand from findings.
-11. Replace every Bash placeholder with a deterministic non-interactive command and explicit exit markers.
-12. Make semantic and command acceptance inspect current project state and complete evidence.
-13. Keep `allowed_restart_targets` limited to the residual writer unless a different bounded correction contract is proven necessary.
-14. Set concurrency to the widest agent fan-out that is actually safe; Bash nodes do not consume it.
-15. Validate the final YAML and compare printed waves with the intended ownership order.
+8. Expand every agent into the ordered task sections; define Bash/graph contracts and deliberate resume behavior.
+9. Define focused verification for each writer without treating self-verification as approval.
+10. Select independent audit lenses based on distinct defect classes.
+11. Bound residual ownership; do not let it expand from findings.
+12. Replace every Bash placeholder with a deterministic non-interactive command and explicit exit markers.
+13. Make semantic and command acceptance inspect current project state and complete evidence.
+14. Keep `allowed_restart_targets` limited to the residual writer unless a different bounded correction contract is proven necessary.
+15. Set concurrency to the widest agent fan-out that is actually safe; Bash nodes do not consume it.
+16. Validate the final YAML and compare printed waves with the intended ownership order.
 
 ## Common Design Mistakes
 

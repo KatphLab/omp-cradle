@@ -1,6 +1,6 @@
 # Bash Nodes
 
-Read this complete file when the new DAG contains a `bash` node.
+Use only when `SKILL.md` routes here. Return to its table before opening any linked reference.
 
 ## Fields
 
@@ -15,20 +15,43 @@ check:
   cwd: .
   waits_for: [implement]
   reports_to: [review]
+  resume:
+    id: check
+    contract_version: 1
+    state_version: 1
+    policy: inputs-unchanged
 ```
 
-| Field         | Required | Contract                                                                           |
-| ------------- | -------- | ---------------------------------------------------------------------------------- |
-| `type`        | yes      | Exactly `bash`.                                                                    |
-| `command`     | yes      | Non-empty deterministic command.                                                   |
-| `output_path` | yes      | Safe workspace-relative path receiving captured output.                            |
-| `cwd`         | no       | Safe workspace-relative command directory; defaults to the project workspace root. |
-| `waits_for`   | no       | Local upstream IDs.                                                                |
-| `reports_to`  | no       | Local downstream IDs.                                                              |
+| Field         | Required | Contract                                                                             |
+| ------------- | -------- | ------------------------------------------------------------------------------------ |
+| `type`        | yes      | Exactly `bash`.                                                                      |
+| `command`     | yes      | Non-empty deterministic command.                                                     |
+| `output_path` | yes      | Safe workspace-relative path receiving captured output.                              |
+| `cwd`         | no       | Safe workspace-relative command directory; defaults to the project workspace root.   |
+| `waits_for`   | no       | Local upstream IDs.                                                                  |
+| `reports_to`  | no       | Local downstream IDs.                                                                |
+| `resume`      | no       | Restart identity, versions, and reuse policy; route through `SKILL.md` when changed. |
 
 A safe relative path is non-empty, is not absolute, and contains no `..` path segment. `output_path` is always resolved from the workspace root, not from `cwd`. The executor creates its parent directory.
 
 Bash nodes do not accept `model`, `extra_context`, `repeat`, or `control`. They do not consume the agent `concurrency` budget.
+
+## Human-Reviewable Contract
+
+Bash nodes have no `task`; their schema is closed. For each Bash node, a reviewer
+must be able to determine:
+
+- Purpose and exact deterministic `command`.
+- Resolved `cwd` and every project path the command may mutate.
+- Unique `output_path`, explicit exit marker or captured status, and the
+  downstream agent that interprets meaningful success or failure.
+- Behavior when output is missing, malformed, stale, truncated, or non-zero.
+- Rerun safety against existing project changes and generated outputs.
+- Resume identity, versions, and policy when external restart may reuse it.
+
+Do not add task-like sibling fields to a Bash node. Record mutable paths,
+interpretation, missing-output behavior, and rerun rules in the surrounding
+workflow design and the interpreting agent's `task`.
 
 ## Use Bash for Project Verification
 

@@ -10,9 +10,9 @@ import { loadSwarmDefinitionFile } from './swarm/loader'
 import {
   assertModelRoutingPlanCompatible,
   buildModelRoutingPlan,
-  type ModelRoutingPlan,
   normalizeModelRoutingCatalogError,
   selectPersistedModelRoutingPlan,
+  type ModelRoutingPlan,
 } from './swarm/model-routing'
 import type { PipelineResult } from './swarm/pipeline'
 import { PipelineController } from './swarm/pipeline'
@@ -21,6 +21,10 @@ import {
   preflightSwarmDefinition,
 } from './swarm/preflight'
 import { renderSwarmProgress } from './swarm/render'
+import {
+  formatRestartDecision,
+  parseRestartOverrides,
+} from './swarm/restart-options'
 import type { SwarmDefinition } from './swarm/schema'
 import type { AgentState, BashNodeState, GraphState } from './swarm/state'
 import {
@@ -28,6 +32,7 @@ import {
   createRestartStateTracker,
   loadPersistedModelRoutingPlan,
   StateTracker,
+  type RestartOverrides,
 } from './swarm/state'
 
 export default function swarmExtension(pi: ExtensionAPI): void {
@@ -64,12 +69,21 @@ export default function swarmExtension(pi: ExtensionAPI): void {
           const yamlPath = parts[1]
           if (!yamlPath) {
             ctx.ui.notify(
-              'Usage: /swarm restart <path/to/pipeline.yaml>',
+              'Usage: /swarm restart <path/to/pipeline.yaml> [--reuse <nodes>] [--rerun <nodes>] [--from <node>]',
               'error',
             )
             return
           }
-          await handleRestart(yamlPath, ctx, pi)
+          let overrides: RestartOverrides
+          try {
+            overrides = parseRestartOverrides(parts.slice(2))
+          } catch (error_) {
+            const error =
+              error_ instanceof Error ? error_ : new Error(String(error_))
+            ctx.ui.notify(error.message, 'error')
+            return
+          }
+          await handleRestart(yamlPath, overrides, ctx, pi)
           return
         }
         case 'status': {
@@ -90,7 +104,7 @@ function showHelp(ctx: ExtensionCommandContext): void {
       'Swarm — multi-agent pipeline orchestrator',
       '',
       '  /swarm run <file.yaml>     Run a pipeline',
-      '  /swarm restart <file.yaml> Restart from prior state, or start fresh when no state exists',
+      '  /swarm restart <file.yaml> [--reuse <nodes>] [--rerun <nodes>] [--from <node>]',
       '  /swarm status [name]       Show pipeline status',
       '  /swarm help                Show this help',
     ].join('\n'),
@@ -193,6 +207,7 @@ async function handleRun(
 
 async function handleRestart(
   yamlPath: string,
+  overrides: RestartOverrides,
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
@@ -207,13 +222,26 @@ async function handleRestart(
       workspace,
       swarmDefinition,
       routingPlan,
+      overrides,
     )
   } catch (error_) {
     const error = error_ instanceof Error ? error_ : new Error(String(error_))
     ctx.ui.notify(error.message, 'error')
     return
   }
-  ctx.ui.notify(restartPlan.message, 'info')
+  const decisionLines = restartPlan.decisions.map(
+    ({ node, decision }) => `${node}: ${formatRestartDecision(decision)}`,
+  )
+  ctx.ui.notify(
+    [
+      restartPlan.message,
+      ...decisionLines,
+      ...(restartPlan.manifestPath === undefined
+        ? []
+        : [`Manifest: ${restartPlan.manifestPath}`]),
+    ].join('\n'),
+    'info',
+  )
   if (restartPlan.alreadyCompleted) {
     ctx.ui.notify(
       renderSwarmProgress(restartPlan.stateTracker.state).join('\n'),

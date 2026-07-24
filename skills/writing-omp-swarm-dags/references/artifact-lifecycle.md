@@ -1,6 +1,6 @@
 # Artifact Lifecycle
 
-Read this complete file when the new DAG creates cross-node handoffs, reports, signals, cleanup, reusable cache, or retained history.
+Use only when `SKILL.md` routes here. Return to its table before opening any linked reference.
 
 ## Separate Project Work from Coordination
 

@@ -1,6 +1,6 @@
 # Project Workflows
 
-Read this complete file for every new DAG.
+Use only when `SKILL.md` routes here. Return to its table before opening any linked reference.
 
 ## Use the Existing Project as the Workspace
 

@@ -185,6 +185,18 @@
         }
       }
     },
+    "resumeContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "contract_version": { "type": "integer", "minimum": 1 },
+        "state_version": { "type": "integer", "minimum": 1 },
+        "policy": {
+          "enum": ["preserve", "inputs-unchanged", "never", "strict"]
+        }
+      }
+    },
     "node": {
       "oneOf": [
         { "$ref": "#/$defs/agentNode" },
@@ -223,7 +235,8 @@
             "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
           }
         },
-        "control": { "$ref": "#/$defs/nodeControl" }
+        "control": { "$ref": "#/$defs/nodeControl" },
+        "resume": { "$ref": "#/$defs/resumeContract" }
       }
     },
     "bashNode": {
@@ -236,7 +249,8 @@
         "output_path": { "type": "string", "minLength": 1 },
         "cwd": { "type": "string", "minLength": 1 },
         "waits_for": { "$ref": "#/$defs/nodeNameList" },
-        "reports_to": { "$ref": "#/$defs/nodeNameList" }
+        "reports_to": { "$ref": "#/$defs/nodeNameList" },
+        "resume": { "$ref": "#/$defs/resumeContract" }
       }
     },
     "graphNode": {
@@ -255,7 +269,8 @@
         "waits_for": { "$ref": "#/$defs/nodeNameList" },
         "reports_to": { "$ref": "#/$defs/nodeNameList" },
         "repeat": { "$ref": "#/$defs/graphRepeat" },
-        "control": { "$ref": "#/$defs/nodeControl" }
+        "control": { "$ref": "#/$defs/nodeControl" },
+        "resume": { "$ref": "#/$defs/resumeContract" }
       },
       "oneOf": [{ "required": ["path"] }, { "required": ["swarm"] }]
     },

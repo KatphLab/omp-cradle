@@ -11,6 +11,7 @@ import {
   collectTransitiveDependents,
   detectCycles,
 } from './dag'
+import { captureFileReference, captureWorkspaceCheckpoint } from './evidence'
 import { executeSwarmAgent, type SwarmExecutorOptions } from './executor'
 import { findModelRoutingNode, type ModelRoutingPlan } from './model-routing'
 import type {
@@ -723,6 +724,11 @@ export class PipelineController {
                 await executeSwarmAgent(agent, currentIndex, executorOptions),
             )
 
+      await this.#recordNodeEvidence(
+        agent.name,
+        options.workspace,
+        result.outputPath,
+      )
       return { agentName, result }
     } catch (error_) {
       const error = error_ instanceof Error ? error_.message : String(error_)
@@ -764,6 +770,11 @@ export class PipelineController {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         stateTracker: this.#stateTracker,
       })
+      await this.#recordNodeEvidence(
+        node.name,
+        options.workspace,
+        node.outputPath,
+      )
       options.emitProgress(
         waveIndex,
         Math.max(this.#waves.length, waveIndex + 1),
@@ -784,6 +795,26 @@ export class PipelineController {
         error,
       }
     }
+  }
+
+  async #recordNodeEvidence(
+    nodeName: string,
+    workspace: string,
+    outputPath: string | undefined,
+  ): Promise<void> {
+    const outputReferences = await captureFileReference(workspace, outputPath)
+    const checkpoint = await captureWorkspaceCheckpoint(
+      workspace,
+      [...this.#swarmDefinition.bashNodes.values()].map(
+        (node) => node.outputPath,
+      ),
+    )
+    if (checkpoint !== undefined) outputReferences['workspace'] = checkpoint
+    await this.#stateTracker.recordNodeResult(
+      this.#swarmDefinition,
+      nodeName,
+      outputReferences,
+    )
   }
 
   #buildAgentExecutorOptions(
@@ -1350,6 +1381,13 @@ export class PipelineController {
       ...(error === undefined ? {} : { error }),
     }
     await this.#stateTracker.updateGraph(graph.name, update)
+    await this.#recordNodeEvidence(
+      graph.name,
+      path.dirname(this.#stateTracker.swarmDir),
+      stateDirectory === undefined
+        ? undefined
+        : path.join(stateDirectory, 'state', 'pipeline.json'),
+    )
     await this.#stateTracker.appendGraphLog(
       graph.name,
       `Graph '${graph.name}' ${status} (${errors.length} errors)`,

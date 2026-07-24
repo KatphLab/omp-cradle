@@ -32,15 +32,60 @@ If unavailable, say `Not run`.
 
 Review backward from terminal acceptance:
 
-| Area                    | Required evidence                                                                                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Acceptance              | Trace every success path. Final review is independent; Bash non-zero settles, so failure needs an exit marker and downstream decision.                                                            |
-| Correction reachability | For every possible open finding, name the required mutation, its owner, allowed restart target, and whether the rewound subgraph contains an authorized writer.                                   |
-| Topology                | Printed waves match required edges; any explicit edge disables implicit local chaining.                                                                                                           |
-| Workspace/ownership     | The resolved workspace is the intended project. Same-wave agents, Bash, and imports share it and have disjoint mutable paths.                                                                     |
-| Data                    | Each handoff defines producer, path, format, consumer, and invalid/missing behavior. Edges schedule only.                                                                                         |
-| Lifecycle/recovery      | Evidence is fresh; cleanup touches only the literal DAG `run/`, never `.swarm_*`; signals have exact producers/grammar; reruns are idempotent because files are not rolled back.                  |
-| Fitness                 | Every agent, model, concurrency slot, loop, staging step, and publisher has a concrete need. Flag destructive commands, security violations, unsupported fields, and project-contradicted claims. |
+| Area                    | Required evidence                                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Acceptance              | Trace every success path. Final review is independent; Bash non-zero settles, so failure needs an exit marker and downstream decision.                                                                             |
+| Agent tasks             | Every non-trivial `task:                                                                                                                                                                                           | ` has the ordered Outcome, Inputs/read, Scope, Decision, Acceptance, Outputs, Control, and Retry sections; no task-like sibling properties. |
+| Correction reachability | For every possible open finding, name the required mutation, its owner, allowed restart target, and whether the rewound subgraph contains an authorized writer.                                                    |
+| Topology                | Printed waves match required edges; any explicit edge disables implicit local chaining.                                                                                                                            |
+| Workspace/ownership     | The resolved workspace is the intended project. Same-wave agents, Bash, and imports share it and have disjoint mutable paths.                                                                                      |
+| Data                    | Each handoff defines producer, path, format, required fields, consumer, overwrite/versioning, and invalid/missing behavior. Edges schedule only; they do not transport data or prove success.                      |
+| Node-type contract      | Bash declares command/cwd/mutations/output/marker/interpreter/rerun safety; graph composition declares child workspace/ownership, parent edges, repeat/control stop behavior, terminal behavior, and rerun safety. |
+| Lifecycle/recovery      | Evidence is fresh; cleanup touches only the literal DAG `run/`, never `.swarm_*`; reruns are idempotent; resume IDs/versions/policies match semantic reuse and runtime evidence limits.                            |
+| Fitness                 | Every agent, model, concurrency slot, loop, staging step, and publisher has a concrete need. Flag destructive commands, security violations, unsupported fields, and project-contradicted claims.                  |
+
+## Fast Contract Checks
+
+A review is incomplete until it can answer without inferring intent:
+
+1. Who owns every mutable project and DAG-artifact path in each phase?
+2. What exact behavior and evidence prove each node succeeded?
+3. How does every consumer locate and validate each input?
+4. Can every restart target requeue an authorized writer that changes the
+   failing predicate?
+5. Will every rerun safely handle existing edits and artifacts?
+
+For each non-trivial agent, require the `agent-nodes.md` labels in order. A
+section may say `Not applicable`, `No handoff required`, or `No control signal`
+only when the conditional contract truly does not apply. The runtime forwards
+`task` as one unparsed string; validator success cannot prove heading content.
+
+Only agent nodes have `task`. The Bash and graph schemas are closed; reject
+task-like sibling properties rather than requesting `inputs`, `writes`, or
+`acceptance` fields.
+
+## Resume and Restart Gate
+
+For every node, resolve the normalized resume contract: stable unique `id`,
+positive `contract_version` and `state_version`, and `preserve`,
+`inputs-unchanged`, `strict`, or `never`. Omitted values normalize to node name,
+version `1`, version `1`, and `preserve`; omission is safe only when that reuse
+contract is actually intended.
+
+Check semantic version discipline and runtime limits:
+
+- `contract_version` changes with outcome/input/output/acceptance meaning;
+  `state_version` changes only for incompatible persisted-result state.
+- `preserve` tolerates definition drift; `strict` does not.
+- `inputs-unchanged` additionally needs matching upstream references, output
+  evidence, exact definition, and unchanged workspace checkpoint.
+- `never` reruns; use it where an old verdict or effect is never sufficient.
+- `--reuse` cannot override missing/malformed state or output evidence, changed
+  workspace checkpoint, type/state-version mismatch, or upstream rerun.
+
+Runtime fingerprints do not replace semantic handoff validation. Reviewers must
+still inspect producer, path, format, fields, consumer, freshness, and
+invalid-output behavior.
 
 ## Correction Reachability Gate
 

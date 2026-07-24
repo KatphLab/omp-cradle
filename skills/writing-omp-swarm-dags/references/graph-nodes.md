@@ -1,6 +1,6 @@
 # Graph Nodes
 
-Read this complete file when the new DAG uses file-backed or inline child graphs, or fixed `repeat` rounds.
+Use only when `SKILL.md` routes here. Return to its table before opening any linked reference.
 
 ## Graph Fields
 
@@ -28,7 +28,38 @@ inline_review:
       review:
         type: agent
         role: reviewer
-        task: Review the current project.
+        task: |
+          Outcome:
+          - Decide whether the current project satisfies the review contract.
+
+          Inputs / read:
+          - Read .omp-swarm/parent/run/implementation.md from the parent
+            implementer as Markdown with changed_paths and acceptance_cases.
+          - Missing or malformed input is BLOCKED and cannot pass.
+
+          Scope:
+          - Inspect: changed_paths from implementation.md.
+          - May edit: .omp-swarm/inline-review/run/review.md only.
+          - Must not edit: project files, sibling reports, or .swarm_*.
+
+          Decision rules:
+          - PASS only when current source satisfies every acceptance case.
+          - Otherwise write actionable FINDINGS.
+
+          Acceptance / verification:
+          - Reproduce the highest-risk acceptance behavior against current source.
+
+          Outputs / handoffs:
+          - Overwrite .omp-swarm/inline-review/run/review.md as Markdown.
+          - Include verdict, findings, evidence, and required_mutations for the
+            parent integrator; failure to produce valid output blocks acceptance.
+
+          Control / correction:
+          - No control signal.
+
+          Retry / failure:
+          - Re-read current source and evidence; overwrite stale review output.
+          - Preserve all project and parent-owned files on failure.
 ```
 
 | Field        | Required | Contract                                                                                              |
@@ -39,7 +70,8 @@ inline_review:
 | `waits_for`  | no       | Local parent upstream IDs.                                                                            |
 | `reports_to` | no       | Local parent downstream IDs.                                                                          |
 | `repeat`     | no       | Fixed bounded child execution described below.                                                        |
-| `control`    | no       | Dynamic decision object; read `control-and-recovery.md`.                                              |
+| `control`    | no       | Dynamic decision object; route through `SKILL.md` when changed.                                       |
+| `resume`     | no       | Restart identity, versions, and reuse policy; route through `SKILL.md` when changed.                  |
 
 Exactly one of `path` and `swarm` is required. They cannot appear together. File-backed children load recursively and import cycles fail validation; inline children may themselves contain either form.
 
@@ -48,6 +80,22 @@ Parent dependencies address the graph node as a unit; they cannot name child nod
 An imported or inline child's agent-level model overrides its own `swarm.model`; parent model settings are not inherited into the child.
 
 With root `model_routing` enabled, routing policy is the exception: it is authoritative across recursively hydrated children. A child may omit it to inherit or declare an enabled policy that only narrows allowed aliases, raises quality, lowers its subtree cost cap, disables zero marginal cost, and increases token assumptions. It cannot introduce routing beneath a non-routed root.
+
+## Human-Reviewable Contract
+
+Graph nodes have no `task`; their schema is closed. For each graph node, record
+outside the node or in its child agent tasks:
+
+- Reason the child is a meaningful composition boundary.
+- Exact imported `path` or inline `swarm`.
+- Child workspace, project/DAG ownership, and overlap implications.
+- Parent scheduling edges and the exact handoffs child consumers read.
+- For `repeat`, stop-signal producer, grammar, overwrite behavior, missing or
+  invalid behavior, rerun safety, and terminal success/failure.
+- For `control`, decision predicates, reachable targets, and correction owners.
+- Resume identity, versions, and policy when external restart may reuse it.
+
+Do not add task-like sibling properties to a graph node.
 
 ## Fixed Graph Repeat
 
