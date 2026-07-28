@@ -29,7 +29,6 @@ const eslintConfig = defineConfig([
       reportUnusedDisableDirectives: 'error',
     },
     rules: {
-      // Prefer TS-aware variants
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
@@ -43,7 +42,6 @@ const eslintConfig = defineConfig([
           ignoreRestSiblings: true,
         },
       ],
-
       'no-use-before-define': 'off',
       '@typescript-eslint/no-use-before-define': [
         'error',
@@ -56,17 +54,11 @@ const eslintConfig = defineConfig([
           ignoreTypeReferences: true,
         },
       ],
-
       'no-unused-expressions': 'off',
       '@typescript-eslint/no-unsafe-type-assertion': 'error',
-
-      // Tighten common escape hatches
       '@typescript-eslint/consistent-type-imports': [
         'error',
-        {
-          prefer: 'type-imports',
-          fixStyle: 'inline-type-imports',
-        },
+        { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
       ],
       '@typescript-eslint/consistent-type-exports': 'error',
       '@typescript-eslint/no-import-type-side-effects': 'error',
@@ -87,7 +79,6 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/prefer-readonly': 'error',
       '@typescript-eslint/ban-ts-comment': 'error',
       '@typescript-eslint/no-base-to-string': 'error',
-      // Script project rules
       'unused-imports/no-unused-imports': 'error',
       'sonarjs/cognitive-complexity': ['error', 12],
       'sonarjs/aws-restricted-ip-admin-access': 'off',
@@ -123,7 +114,6 @@ const eslintConfig = defineConfig([
         'error',
         {
           allowList: {
-            // TypeScript / runtime conventions
             env: true,
             Env: true,
             args: true,
@@ -132,16 +122,16 @@ const eslintConfig = defineConfig([
             fn: true,
             Fn: true,
             temp: true,
-
             ctx: true,
             params: true,
             Def: true,
             msg: true,
             opts: true,
+            req: true,
+            res: true,
+            SSE: true,
           },
-
           ignore: [],
-
           checkProperties: false,
           checkShorthandProperties: false,
           checkDefaultAndNamespaceImports: 'internal',
@@ -150,15 +140,7 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  globalIgnores([
-    '.dependency-cruiser.js',
-    '**/*.config.mjs',
-    'eslint.config.mjs',
-    'dist/**',
-    'server/**',
-    '.opencode/**',
-    '.worktrees/**',
-  ]),
+  globalIgnores(['eslint.config.mjs', 'dist/**']),
 ])
 
 export default eslintConfig

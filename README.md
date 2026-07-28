@@ -4,66 +4,52 @@ A TypeScript workspace for building Oh My Pi extensions with local static-analys
 
 ## Features
 
-- **[TypeScript](https://www.typescriptlang.org)** with strict configuration for Node.js
-- **[tsx](https://github.com/privatenumber/tsx)** for fast TypeScript execution in development
-- **Code Quality**: ESLint, Prettier, Husky, lint-staged
-- **Architecture Enforcement**: ESLint boundaries, dependency-cruiser, knip
+- **Bun 1.3.14** for dependency management and repository scripts
+- **TypeScript native preview** with strict configuration
+- **Code quality**: ESLint, Prettier, Husky, and lint-staged
+- **Architecture enforcement**: dependency-cruiser, Knip, and jscpd
 - **Security**: ESLint security rules and duplicate code detection
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js >=24.0.0 <25 (managed via `packageManager: pnpm@10.33.4`)
-- pnpm (Corepack enabled)
+- Bun 1.3.14 or newer
+- Node.js >=24.0.0 <25
 
 ### Installation
 
 ```bash
-pnpm install
+bun install
+cd server && bun install
 ```
 
 ### Development
 
-```bash
-pnpm dev
-```
+The root OMP configuration registers the repository extensions, including the loopback-only HTTP server at `./server/src/index.ts`. Start OMP from this repository to load them.
 
-Runs `src/index.ts` in watch mode with tsx.
-
-### Build
+The server is an independent Bun package. Its API, security boundary, configuration, and examples are documented in [`server/README.md`](./server/README.md).
 
 ```bash
-pnpm build
+cd server
+bun dev
 ```
-
-Compiles TypeScript to `dist/` using `tsc`.
-
-### Run
-
-```bash
-pnpm start
-```
-
-Executes the compiled output from `dist/`.
 
 ## Scripts
 
-| Script              | Description                                                                   |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `pnpm dev`          | Run in development with tsx watch                                             |
-| `pnpm build`        | Compile TypeScript to dist/                                                   |
-| `pnpm start`        | Run compiled output                                                           |
-| `pnpm lint`         | Run ESLint                                                                    |
-| `pnpm lint:fix`     | Fix ESLint issues                                                             |
-| `pnpm typecheck`    | Run TypeScript compiler (no emit)                                             |
-| `pnpm format`       | Format code with Prettier                                                     |
-| `pnpm format:check` | Check formatting                                                              |
-| `pnpm check`        | **Full quality gate**: format, lint, typecheck, depcruise, knip, and dupcheck |
-| `pnpm fix`          | Auto-fix issues: format, lint, knip                                           |
-| `pnpm depcruise`    | Check architecture boundaries                                                 |
-| `pnpm knip`         | Find unused dependencies/exports                                              |
-| `pnpm dupcheck`     | Check for code duplication                                                    |
+| Script          | Description                                                                  |
+| --------------- | ---------------------------------------------------------------------------- |
+| `bun lint`      | Run ESLint                                                                   |
+| `bun lint:fix`  | Fix ESLint findings                                                          |
+| `bun typecheck` | Run the TypeScript compiler without emitting                                 |
+| `bun format`    | Format with Prettier                                                         |
+| `bun check`     | Full gate: format, lint, typecheck, depcruise, Knip, and duplicate detection |
+| `bun fix`       | Auto-fix formatting, lint, and Knip findings                                 |
+| `bun depcruise` | Check architecture boundaries                                                |
+| `bun knip`      | Find unused dependencies and exports                                         |
+| `bun dupcheck`  | Check for code duplication                                                   |
+
+Run server-package commands from `server/`; `bun run check` there formats, lints, typechecks, and builds the extension.
 
 ## Quality Gates
 
@@ -73,7 +59,7 @@ This repository enforces local static checks:
 - **Architecture boundaries**: Enforced via ESLint and dependency-cruiser
 - **No code duplication**: jscpd detects copy-pasted code
 
-Run `pnpm check` locally before sharing changes.
+Run `bun check` locally before sharing changes.
 
 ## AI Agent Guidelines
 
