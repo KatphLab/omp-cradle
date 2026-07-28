@@ -9,6 +9,8 @@ description: Use when authoring or modifying OMP swarm YAML DAGs for existing pr
 
 Use the existing project as `swarm.workspace`; keep DAG paths for coordination and evidence. Give every mutable path one writer per phase, use explicit handoffs, emit control and repeat decisions through their typed tools, make retries idempotent, and validate the root DAG.
 
+`omp-swarm` creates `signals/`, `tracking/`, `reports/`, and `output/` in the workspace before execution. Never add a prepare node or task instructions solely to create these directories; retain preparation only for project validation, cleanup, canonicalization, or nonstandard directory trees.
+
 ## Route Before Reading
 
 Inspect the request/YAML first:
