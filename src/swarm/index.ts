@@ -1,8 +1,8 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
+  Settings,
 } from '@oh-my-pi/pi-coding-agent'
-import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { formatDuration } from './swarm/format'
@@ -130,6 +130,7 @@ async function prepareExtensionWorkspace(
   definition: SwarmDefinition,
   workspace: string,
   ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
   restart: boolean,
 ): Promise<ExtensionPreparation> {
   try {
@@ -137,6 +138,7 @@ async function prepareExtensionWorkspace(
       definition,
       workspace,
       ctx,
+      pi,
       restart,
     )
     await fs.mkdir(workspace, { recursive: true })
@@ -154,6 +156,7 @@ async function prepareExtensionWorkspace(
 async function loadPreparedSwarmContext(
   yamlPath: string,
   ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
   restart: boolean,
 ): Promise<
   | (SwarmRunContext & {
@@ -168,6 +171,7 @@ async function loadPreparedSwarmContext(
     swarmContext.swarmDefinition,
     swarmContext.workspace,
     ctx,
+    pi,
     restart,
   )
   if (!preparation.ok) return undefined
@@ -179,7 +183,7 @@ async function handleRun(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
-  const swarmContext = await loadPreparedSwarmContext(yamlPath, ctx, false)
+  const swarmContext = await loadPreparedSwarmContext(yamlPath, ctx, pi, false)
   if (swarmContext === undefined) return
   const { swarmDefinition, waves, workspace, routingPlan, settings } =
     swarmContext
@@ -211,7 +215,7 @@ async function handleRestart(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
-  const swarmContext = await loadPreparedSwarmContext(yamlPath, ctx, true)
+  const swarmContext = await loadPreparedSwarmContext(yamlPath, ctx, pi, true)
   if (swarmContext === undefined) return
   const { swarmDefinition, waves, workspace, routingPlan, settings } =
     swarmContext
@@ -296,6 +300,7 @@ async function prepareExtensionRoutingPlan(
   definition: SwarmDefinition,
   workspace: string,
   ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
   restart: boolean,
 ): Promise<PreparedExtensionRouting | undefined> {
   if (definition.modelRouting === undefined) return undefined
@@ -315,6 +320,7 @@ async function prepareExtensionRoutingPlan(
     definition,
     workspace,
     ctx,
+    pi,
     savedPlan,
   )
 }
@@ -323,9 +329,10 @@ async function prepareExecutableExtensionRouting(
   definition: SwarmDefinition,
   workspace: string,
   ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
   persistedPlan: ModelRoutingPlan | undefined,
 ): Promise<PreparedExtensionRouting> {
-  const settings = await Settings.loadReadOnly({ cwd: workspace })
+  const settings = await pi.pi.Settings.loadReadOnly({ cwd: workspace })
   try {
     await ctx.modelRegistry.refresh('online-if-uncached')
   } catch (error_) {

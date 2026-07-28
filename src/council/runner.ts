@@ -3,7 +3,7 @@
  * then synthesizes their analyses into a structured verdict.
  */
 import type { Context } from '@oh-my-pi/pi-ai'
-import { complete } from '@oh-my-pi/pi-ai/stream'
+import { complete } from '@oh-my-pi/pi-ai'
 import type { Model } from '@oh-my-pi/pi-catalog/types'
 import { SYNTHESIS_PROMPT, VOICES } from './prompts'
 

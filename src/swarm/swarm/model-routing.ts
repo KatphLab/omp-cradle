@@ -11,11 +11,6 @@ import {
 } from '@oh-my-pi/pi-coding-agent/config/model-resolver'
 import { MODEL_ROLE_IDS } from '@oh-my-pi/pi-coding-agent/config/model-roles'
 import type { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
-import {
-  AUTO_THINKING,
-  parseEffort,
-  parseThinkingLevel,
-} from '@oh-my-pi/pi-coding-agent/thinking'
 import { buildDependencyGraph, collectTransitiveDependents } from './dag'
 import type {
   ModelRoutingQuality,
@@ -89,6 +84,17 @@ interface PricedSelection {
   assumptions: string[]
 }
 const BUILT_IN_ROLE_IDS: readonly string[] = MODEL_ROLE_IDS
+const THINKING_SUFFIXES: Readonly<Record<string, true>> = {
+  inherit: true,
+  off: true,
+  minimal: true,
+  low: true,
+  medium: true,
+  high: true,
+  xhigh: true,
+  max: true,
+  auto: true,
+}
 
 const QUALITY_RANK: Record<ModelRoutingQuality, number> = {
   economy: 0,
@@ -736,11 +742,7 @@ function validateThinkingSuffix(
 ): string | undefined {
   if (suffix === undefined) return undefined
   if (!allowThinking) return 'must not include a thinking suffix'
-  const valid =
-    parseThinkingLevel(suffix) !== undefined ||
-    parseEffort(suffix) !== undefined ||
-    suffix === 'max' ||
-    suffix === AUTO_THINKING
+  const valid = Object.hasOwn(THINKING_SUFFIXES, suffix)
   return valid ? undefined : `has unsupported thinking suffix '${suffix}'`
 }
 
