@@ -14,6 +14,12 @@ import type {
 } from '@oh-my-pi/pi-coding-agent/task/types'
 import path from 'node:path'
 import type { SwarmAgent } from './schema'
+import {
+  CONTROL_DECISION_TOOL_NAME,
+  REPEAT_DECISION_TOOL_NAME,
+  writeSignalToolContext,
+  type SwarmSignalToolContext,
+} from './signal-tool-context'
 import type { StateTracker } from './state'
 
 export interface SwarmExecutorOptions {
@@ -27,6 +33,7 @@ export interface SwarmExecutorOptions {
   modelRegistry?: ModelRegistry
   settings?: Settings
   stateTracker: StateTracker
+  signalToolContext?: SwarmSignalToolContext
 }
 
 export async function executeSwarmAgent(
@@ -34,6 +41,14 @@ export async function executeSwarmAgent(
   index: number,
   options: SwarmExecutorOptions,
 ): Promise<SingleResult> {
+  const runId = buildRunId(agent, options)
+  if (options.signalToolContext !== undefined) {
+    await writeSignalToolContext(
+      options.stateTracker.swarmDir,
+      runId,
+      options.signalToolContext,
+    )
+  }
   await markAgentStarted(agent, options)
 
   try {
@@ -73,10 +88,10 @@ function buildExecutorOptions(
 ): ExecutorOptions {
   const executorOptions: ExecutorOptions = {
     cwd: options.workspace,
-    agent: buildAgentDefinition(agent),
+    agent: buildAgentDefinition(agent, options.signalToolContext),
     task: agent.task,
     index,
-    id: `swarm-${options.swarmName}-${agent.name}-${options.iteration}-attempt${options.attempt}`,
+    id: buildRunId(agent, options),
     onProgress: (progress) => {
       if (
         progress.resolvedModel !== undefined &&
@@ -102,14 +117,48 @@ function buildExecutorOptions(
   return executorOptions
 }
 
-function buildAgentDefinition(agent: SwarmAgent): AgentDefinition {
+function buildAgentDefinition(
+  agent: SwarmAgent,
+  signalToolContext: SwarmSignalToolContext | undefined,
+): AgentDefinition {
+  const tools = buildAgentTools(agent.tools, signalToolContext)
   return {
     name: agent.name,
     description: `Swarm agent: ${agent.role}`,
     systemPrompt: buildSystemPrompt(agent),
     source: 'project',
-    ...(agent.tools === undefined ? {} : { tools: agent.tools }),
+    ...(tools === undefined ? {} : { tools }),
   }
+}
+
+function buildAgentTools(
+  configuredTools: string[] | undefined,
+  signalToolContext: SwarmSignalToolContext | undefined,
+): string[] | undefined {
+  if (configuredTools === undefined) return undefined
+  const tools = [...configuredTools]
+  if (
+    signalToolContext !== undefined &&
+    signalToolContext.controls.length > 0 &&
+    !tools.includes(CONTROL_DECISION_TOOL_NAME)
+  ) {
+    tools.push(CONTROL_DECISION_TOOL_NAME)
+  }
+  if (
+    signalToolContext !== undefined &&
+    signalToolContext.repeats.length > 0 &&
+    !tools.includes(REPEAT_DECISION_TOOL_NAME)
+  ) {
+    tools.push(REPEAT_DECISION_TOOL_NAME)
+  }
+  return tools
+}
+
+function buildRunId(
+  agent: SwarmAgent,
+  options: Pick<SwarmExecutorOptions, 'swarmName' | 'iteration' | 'attempt'>,
+): string {
+  return `swarm-${options.swarmName}-${agent.name}-${options.iteration}-attempt${options.attempt}`
 }
 
 async function recordAgentResult(

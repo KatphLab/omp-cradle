@@ -148,7 +148,7 @@ Run semantic acceptance in parallel with the command-check branch. It rechecks t
 
 ### Bound recovery to a suffix
 
-The final controller always writes one final report and one valid control signal:
+The final controller always writes one final report and submits one decision with `submit_control_decision`:
 
 - `continue` only when semantic and check acceptance pass and no blocker remains;
 - `restart` targeting only `residual_repair` for a confirmed defect fixable within that node's ownership; or
@@ -182,8 +182,8 @@ swarm:
       task: |
         Verify stable project anchors before cleanup. Prepare only the literal
         .omp-swarm/spec-review-remediation/run/ subtree. Never edit project files
-        or runtime-owned .swarm_* paths. Always atomically write exactly one
-        prepare control decision: continue on safe preparation, otherwise fail.
+        or runtime-owned .swarm_* paths. Call submit_control_decision exactly
+        once: continue on safe preparation, otherwise fail with a safe reason.
       reports_to: [analyze_domain_a, analyze_domain_b, analyze_governance]
       control:
         signal: .omp-swarm/spec-review-remediation/run/signals/prepare.control.yaml
@@ -367,9 +367,10 @@ swarm:
       role: Final acceptance controller
       task: |
         Read semantic and check acceptance plus the latest residual report. Do not
-        edit project files. Atomically write one final report and exactly one
-        control decision: continue only on complete acceptance; restart only
-        residual_repair for a confirmed in-scope defect; otherwise fail safely.
+        edit project files. Atomically write one final report and call
+        submit_control_decision exactly once: continue only on complete
+        acceptance; restart target residual_repair only for a confirmed in-scope
+        defect; otherwise fail with a safe reason.
       waits_for: [semantic_acceptance, check_acceptance]
       control:
         signal: .omp-swarm/spec-review-remediation/run/signals/final.control.yaml

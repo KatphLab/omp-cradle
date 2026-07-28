@@ -54,19 +54,18 @@ swarm:
         - Atomically overwrite run/meta/request.yaml as canonical YAML with
           accepted source, anchor, and prior-output digests for every downstream
           node.
-        - Atomically overwrite run/signals/prepare.control.yaml as control YAML
-          with action and reason for the runtime.
+        - Submit exactly one typed control decision; the runtime writes the
+          configured prepare.control.yaml signal.
 
         Control / correction:
-        - Continue only for READY with reason: authoring request and existing
-          workspace verified.
-        - Otherwise fail with one concrete safe reason and no target.
+        - Call submit_control_decision with action continue only for READY and
+          reason: authoring request and existing workspace verified.
+        - Otherwise call it with action fail and one concrete safe reason.
 
         Retry / failure:
         - Revalidate before deleting only the literal run/ subtree.
-        - Preserve project, input, generated output, and runtime state on failure;
-          create only run/signals/ when needed to emit the fail decision.
-        - Never emit a second decision.
+        - Preserve project, input, generated output, and runtime state on failure.
+        - Never submit a second decision.
       control:
         signal: .omp-swarm/author-complex-dag/run/signals/prepare.control.yaml
         allowed_restart_targets: [prepare]
@@ -526,8 +525,7 @@ swarm:
 
         Scope:
         - Inspect: only declared request, manifests, and reader packets.
-        - May edit: run/reports/source-coverage.md and
-          run/signals/coverage.control.yaml.
+        - May edit: run/reports/source-coverage.md.
         - Must not edit: sources, project files, upstream artifacts, or .swarm_*.
 
         Decision rules:
@@ -543,12 +541,12 @@ swarm:
         Outputs / handoffs:
         - Atomically overwrite source-coverage.md as Markdown for
           synthesize_design with status and all computed evidence.
-        - Atomically overwrite coverage.control.yaml as runtime control YAML with
-          action and reason; invalid or unwritable output fails this node.
+        - Submit exactly one decision with submit_control_decision; failure to
+          submit it fails this node.
 
         Control / correction:
-        - Continue only for COVERAGE_PASS.
-        - Otherwise fail with one concrete reason and no target.
+        - Call submit_control_decision with action continue only for COVERAGE_PASS.
+        - Otherwise call it with action fail and one concrete reason.
 
         Retry / failure:
         - Re-read all current packets and replace stale outputs atomically.
@@ -1023,8 +1021,7 @@ swarm:
 
         Scope:
         - Inspect: declared reports and current generated DAG.
-        - May edit: run/reports/final-decision.md and
-          run/signals/final.control.yaml.
+        - May edit: run/reports/final-decision.md.
         - Must not edit: generated DAG, project files, upstream artifacts, or
           .swarm_*.
 
@@ -1042,19 +1039,20 @@ swarm:
         Outputs / handoffs:
         - Atomically overwrite final-decision.md with verdict, evidence, findings,
           required mutations, owner/target, and reason for the operator.
-        - Write final.control.yaml last as exactly one valid runtime decision;
-          failure to produce both valid outputs fails this node.
+        - Submit exactly one decision with submit_control_decision after writing
+          the report; failure to produce both outputs fails this node.
 
         Control / correction:
-        - Continue only for ACCEPT.
-        - Restart only target repair_dag for CORRECT; its suffix contains the
-          generated-DAG writer, final validator, and both acceptance branches.
-        - Fail for every FAIL predicate; never restart preparation, source reading,
-          synthesis, or audits.
+        - Call submit_control_decision with action continue only for ACCEPT.
+        - Call it with action restart, target repair_dag, and a concrete reason
+          only for CORRECT; its suffix contains the generated-DAG writer, final
+          validator, and both acceptance branches.
+        - Call it with action fail for every FAIL predicate; never restart
+          preparation, source reading, synthesis, or audits.
 
         Retry / failure:
         - Re-read current DAG/latest evidence because prior edits persist.
-        - Supersede stale findings and atomically replace both owned outputs.
+        - Supersede stale findings, replace the report, and submit a fresh decision.
       waits_for: [semantic_acceptance, validation_acceptance]
       control:
         signal: .omp-swarm/author-complex-dag/run/signals/final.control.yaml

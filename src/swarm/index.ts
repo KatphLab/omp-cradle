@@ -5,6 +5,7 @@ import type {
 } from '@oh-my-pi/pi-coding-agent'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
+import { registerSwarmSignalTools } from './signal-tools'
 import { formatDuration } from './swarm/format'
 import { loadSwarmDefinitionFile } from './swarm/loader'
 import {
@@ -37,6 +38,7 @@ import {
 
 export default function swarmExtension(pi: ExtensionAPI): void {
   pi.setLabel('Swarm Orchestrator')
+  registerSwarmSignalTools(pi)
 
   pi.registerCommand('swarm', {
     description: 'Run a multi-agent swarm pipeline from YAML',

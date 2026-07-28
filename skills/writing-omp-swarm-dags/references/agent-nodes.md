@@ -104,9 +104,11 @@ conditional contract genuinely does not apply.
    when production fails. Use `No handoff required` only when no downstream
    artifact is needed.
 7. **Control / correction:** controllers define exact `continue`, `restart`, and
-   `fail` predicates. Every restart names the failing predicate, required
-   mutation, selected target, and authorized writer in the invalidated suffix.
-   Non-controllers write `No control signal`.
+   `fail` predicates and invoke `submit_control_decision` exactly once. Every
+   restart names the failing predicate, required mutation, selected target, and
+   authorized writer in the invalidated suffix. Repeat decision owners invoke
+   `submit_repeat_decision` exactly once per round. Non-controllers write
+   `No control signal`.
 8. **Retry / failure:** re-read current project state and latest review evidence;
    assume prior edits and artifacts remain; define idempotence; preserve unrelated
    work; leave actionable evidence on failure. This section is mandatory for
@@ -147,7 +149,7 @@ A modifying agent may coherently own production source, directly coupled tests, 
 
 Reviewers inspect the actual project tree and focused check evidence. A read-only reviewer may:
 
-- Accept and write `action: continue` through control.
+- Accept by calling `submit_control_decision` with action `continue`.
 - Reject with concrete findings and restart the upstream implementer.
 - Fail when safe completion is impossible.
 

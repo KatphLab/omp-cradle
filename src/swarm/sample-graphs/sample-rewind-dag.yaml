@@ -15,19 +15,9 @@ swarm:
       type: agent
       role: sample-file-writer
       task: |
-        Smoke test only. In the swarm workspace, create directories signals,
-        tracking, reports, and output. Append exactly this line to
+        Smoke test only. In the swarm workspace, append exactly this line to
         tracking/executions.txt: build
-        Write reports/build.md with exactly "build ok". If
-        tracking/review-requested-rewind.txt does not exist, create that marker
-        with exactly REQUESTED and write signals/review.control.yaml with exactly:
-        action: restart
-        target: build
-        reason: "sample forces review to restart build once"
-        If tracking/review-requested-rewind.txt already exists, write
-        signals/review.control.yaml with exactly:
-        action: continue
-        reason: "sample rewind accepted"
+        Write reports/build.md with exactly "build ok".
       reports_to: [review]
 
     review:
@@ -35,9 +25,14 @@ swarm:
       role: sample-reviewer
       task: |
         Smoke test only. In the swarm workspace, read reports/build.md and
-        signals/review.control.yaml. Append exactly this line to
+        tracking/executions.txt. Append exactly this line to
         tracking/executions.txt: review
         Write reports/review.md with exactly "review ok".
+        If tracking/executions.txt contains exactly one build line, call
+        submit_control_decision with action "restart", target "build", and reason
+        "sample forces review to restart build once". Otherwise call
+        submit_control_decision with action "continue" and reason
+        "sample rewind accepted".
       waits_for: [build]
       reports_to: [final]
       control:

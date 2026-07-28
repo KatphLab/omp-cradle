@@ -7,7 +7,7 @@ description: Use when authoring or modifying OMP swarm YAML DAGs for existing pr
 
 ## Core
 
-Use the existing project as `swarm.workspace`; keep DAG paths for coordination and evidence. Give every mutable path one writer per phase, use explicit handoffs, make retries idempotent, and validate the root DAG.
+Use the existing project as `swarm.workspace`; keep DAG paths for coordination and evidence. Give every mutable path one writer per phase, use explicit handoffs, emit control and repeat decisions through their typed tools, make retries idempotent, and validate the root DAG.
 
 ## Route Before Reading
 
@@ -30,7 +30,7 @@ This file is the core. Read exactly the matching rows. Never scan `references/` 
 | Adding or changing control, restart, external rewind, or resume                                   | [Control and Recovery](references/control-and-recovery.md) |
 | Adding or changing cleanup, cache, history, retention, cross-run reuse, or staged promotion       | [Artifact Lifecycle](references/artifact-lifecycle.md)     |
 
-Ordinary reports, handoffs, check outputs, and signals use their node contracts; they do not trigger Artifact Lifecycle.
+Ordinary reports, handoffs, and check outputs use their node contracts. Control and repeat signal paths are runtime handoffs written through `submit_control_decision` and `submit_repeat_decision`; they do not trigger Artifact Lifecycle.
 
 ## Templates
 
@@ -47,7 +47,7 @@ No exact match means custom authoring.
 1. Define outcome, workspace/anchors, commands, inspect/edit/forbidden paths, and project versus DAG ownership.
 2. Draw the smallest graph; prove bootstrap order, handoffs, and one writer per mutable path.
 3. Put each non-trivial agent contract inside ordered `task: |` sections; the closed schema rejects task-like sibling fields.
-4. For each correction, name the failed predicate, mutation, owner, target, and reachable writer. Rewind does not restore files.
+4. For each correction, name the failed predicate, mutation, owner, target, reachable writer, and exact typed decision-tool call. Rewind does not restore files.
 5. Interpret meaningful Bash evidence with an agent; settlement is not acceptance.
 6. Validate the root and imports, fix diagnostics, and inspect waves:
 
@@ -62,6 +62,7 @@ Ready ends with `Validation: ok` and waves matching ownership and correction ord
 - Reading before routing, or loading a template plus equivalent references.
 - Treating edges as data transport or Bash/file existence as acceptance.
 - Restarting a node unable to change the failed predicate.
+- Instructing agents to write control YAML or repeat status files directly instead of calling the typed decision tools.
 
 ## Delivery
 

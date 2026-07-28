@@ -31,7 +31,9 @@ control:
 
 `signal` is a safe workspace-relative YAML path. `allowed_restart_targets` is a non-empty unique list of local node IDs. Every target must be the controlled node itself or one of its transitive upstream dependencies.
 
-The runtime reads a control decision only after the controlled node executes successfully. The task must always write exactly one valid decision before returning.
+The runtime reads a control decision only after the controlled node executes
+successfully. The task must invoke `submit_control_decision` exactly once before
+returning; the tool validates the action and writes the configured `signal`.
 
 ### Control-Target Correction Reachability
 
@@ -46,37 +48,42 @@ change that evidence file or transfer its ownership. If acceptance still require
 the stale file to change, restart its reachable owner or fail. Do not consume a
 restart on a target that cannot make the reason false.
 
-## Control Signal Grammar
+## Control Decision Tool
 
-| Signal field | Contract                                                                       |
-| ------------ | ------------------------------------------------------------------------------ |
-| `action`     | Required; exactly `continue`, `restart`, or `fail`.                            |
-| `target`     | Required only for `restart`; forbidden otherwise; must be allowed by the node. |
-| `reason`     | Required and non-empty for `restart` and `fail`; optional for `continue`.      |
+`submit_control_decision` accepts:
+
+| Field    | Contract                                                                       |
+| -------- | ------------------------------------------------------------------------------ |
+| `action` | Required; exactly `continue`, `restart`, or `fail`.                            |
+| `target` | Required only for `restart`; forbidden otherwise; must be allowed by the node. |
+| `reason` | Required and non-empty for `restart` and `fail`; optional for `continue`.      |
+| `scope`  | Omit when one channel is available; otherwise use a runtime-listed scope.      |
 
 Continue permits an optional non-empty reason and forbids `target`:
 
-```yaml
-action: continue
-reason: focused checks and review passed
+```json
+{ "action": "continue", "reason": "focused checks and review passed" }
 ```
 
 Restart requires both an allowed target and a non-empty reason:
 
-```yaml
-action: restart
-target: implement
-reason: src/feature.ts still violates the acceptance contract
+```json
+{
+  "action": "restart",
+  "target": "implement",
+  "reason": "src/feature.ts still violates the acceptance contract"
+}
 ```
 
 Fail requires a non-empty reason and forbids `target`:
 
-```yaml
-action: fail
-reason: the required project API is unavailable
+```json
+{ "action": "fail", "reason": "the required project API is unavailable" }
 ```
 
-Use a dedicated `.yaml` control file. Do not use the one-line signal format reserved for graph `repeat`.
+The agent calls the tool with these arguments; it never writes the control YAML
+directly. The configured `signal` remains the runtime handoff read by the
+orchestrator.
 
 ## Rewind Semantics
 

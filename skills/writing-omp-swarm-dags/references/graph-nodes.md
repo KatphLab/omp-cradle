@@ -90,8 +90,9 @@ outside the node or in its child agent tasks:
 - Exact imported `path` or inline `swarm`.
 - Child workspace, project/DAG ownership, and overlap implications.
 - Parent scheduling edges and the exact handoffs child consumers read.
-- For `repeat`, stop-signal producer, grammar, overwrite behavior, missing or
-  invalid behavior, rerun safety, and terminal success/failure.
+- For `repeat`, one terminal decision owner, its `submit_repeat_decision` action,
+  overwrite behavior, missing-decision behavior, rerun safety, and terminal
+  success/failure.
 - For `control`, decision predicates, reachable targets, and correction owners.
 - Resume identity, versions, and policy when external restart may reuse it.
 
@@ -109,16 +110,39 @@ repeat:
 
 All four fields are required:
 
-| Field            | Contract                                                       |
-| ---------------- | -------------------------------------------------------------- |
-| `max_rounds`     | Integer `>= 1`; hard execution limit.                          |
-| `stop_signal`    | Safe workspace-relative one-line status file.                  |
-| `success_value`  | Non-empty exact trimmed value that completes the graph node.   |
-| `continue_value` | Non-empty exact trimmed value that starts another child round. |
+| Field            | Contract                                                    |
+| ---------------- | ----------------------------------------------------------- |
+| `max_rounds`     | Integer `>= 1`; hard execution limit.                       |
+| `stop_signal`    | Safe workspace-relative status path written by the runtime. |
+| `success_value`  | Non-empty value emitted for tool action `complete`.         |
+| `continue_value` | Non-empty value emitted for tool action `continue`.         |
 
-`repeat` is valid only on graph nodes. A repeated child must declare `target_count: 1`.
+Give exactly one terminal agent ownership of the repeat decision. That agent
+must invoke `submit_repeat_decision` exactly once per round:
 
-After each child run, the parent reads `stop_signal` from the shared project workspace. Missing content, an unexpected value, or `continue_value` after the final allowed round fails the graph node. Use `repeat` only when every round has the same graph shape and source edits are idempotent against the already-modified project tree.
+```json
+{ "action": "complete" }
+```
+
+or:
+
+```json
+{ "action": "continue" }
+```
+
+The agent never writes `stop_signal` or copies `success_value` /
+`continue_value`; the tool maps the semantic action to the configured value and
+writes the file atomically. `scope` is omitted when one repeat channel is
+available and is required only when the tool reports multiple scopes.
+
+`repeat` is valid only on graph nodes. A repeated child must declare
+`target_count: 1`.
+
+After each child run, the parent reads `stop_signal` from the shared project
+workspace. A missing tool submission, an unexpected value, or `continue` after
+the final allowed round fails the graph node. Use `repeat` only when every round
+has the same graph shape and source edits are idempotent against the
+already-modified project tree.
 
 Use graph `repeat` for a fixed review/refinement protocol. Use node `control` when a reviewer must choose a particular upstream target to rewind. Do not combine loops unless both boundaries are independently necessary.
 

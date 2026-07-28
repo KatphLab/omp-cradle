@@ -23,6 +23,12 @@ import type {
   SwarmNodeControl,
 } from './schema'
 import {
+  removeWorkspaceSignal,
+  type ControlSignalToolChannel,
+  type RepeatSignalToolChannel,
+  type SwarmSignalToolContext,
+} from './signal-tool-context'
+import {
   createInitializedStateTracker,
   type RestartEvent,
   type StateTracker,
@@ -40,6 +46,7 @@ export interface PipelineOptions {
   modelRegistry?: ModelRegistry
   settings?: Settings
   agentConcurrencyLimiter?: AgentConcurrencyLimiter
+  signalToolContext?: SwarmSignalToolContext
   resume?: {
     startIteration: number
     settledNodes: readonly string[]
@@ -707,6 +714,9 @@ export class PipelineController {
 
     const attempt = this.#stateTracker.state.agents[agentName]?.attempt ?? 1
     try {
+      if (agent.control !== undefined) {
+        await removeWorkspaceSignal(options.workspace, agent.control.signal)
+      }
       const executorOptions = this.#buildAgentExecutorOptions(
         agent,
         iteration,
@@ -818,12 +828,13 @@ export class PipelineController {
   }
 
   #buildAgentExecutorOptions(
-    agent: Pick<SwarmAgent, 'name' | 'model'>,
+    agent: SwarmAgent,
     iteration: number,
     attempt: number,
     waveIndex: number,
     options: IterationOptions,
   ): SwarmExecutorOptions {
+    const signalToolContext = this.#buildAgentSignalToolContext(agent, options)
     const executorOptions: SwarmExecutorOptions = {
       workspace: options.workspace,
       swarmName: this.#swarmDefinition.name,
@@ -836,6 +847,7 @@ export class PipelineController {
         )
       },
       stateTracker: this.#stateTracker,
+      ...(signalToolContext === undefined ? {} : { signalToolContext }),
     }
     const modelOverride =
       this.#modelRoutingPlan === undefined
@@ -852,6 +864,71 @@ export class PipelineController {
     if (options.settings !== undefined)
       executorOptions.settings = options.settings
     return executorOptions
+  }
+  #buildAgentSignalToolContext(
+    agent: SwarmAgent,
+    options: IterationOptions,
+  ): SwarmSignalToolContext | undefined {
+    const { controls, repeats } = this.#buildInheritedSignalToolChannels(
+      agent.name,
+      options,
+    )
+    if (agent.control !== undefined) {
+      controls.push({
+        scope: `${this.#graphPath}/${agent.name}`,
+        signal: agent.control.signal,
+        allowedRestartTargets: agent.control.allowedRestartTargets,
+      })
+    }
+    if (controls.length === 0 && repeats.length === 0) return undefined
+    return { version: 1, controls, repeats }
+  }
+
+  #buildGraphSignalToolContext(
+    graph: SwarmGraphNode,
+    options: IterationOptions,
+  ): SwarmSignalToolContext | undefined {
+    const { controls, repeats } = this.#buildInheritedSignalToolChannels(
+      graph.name,
+      options,
+    )
+    if (graph.control !== undefined) {
+      controls.push({
+        scope: `${this.#graphPath}/${graph.name}`,
+        signal: graph.control.signal,
+        allowedRestartTargets: graph.control.allowedRestartTargets,
+      })
+    }
+    if (graph.repeat !== undefined) {
+      repeats.push({
+        scope: `${this.#graphPath}/${graph.name}`,
+        signal: graph.repeat.stopSignal,
+        successValue: graph.repeat.successValue,
+        continueValue: graph.repeat.continueValue,
+      })
+    }
+    if (controls.length === 0 && repeats.length === 0) return undefined
+    return { version: 1, controls, repeats }
+  }
+
+  #buildInheritedSignalToolChannels(
+    nodeName: string,
+    options: IterationOptions,
+  ): {
+    controls: ControlSignalToolChannel[]
+    repeats: RepeatSignalToolChannel[]
+  } {
+    if (!this.#isTerminalNode(nodeName)) return { controls: [], repeats: [] }
+    return {
+      controls: [...(options.signalToolContext?.controls ?? [])],
+      repeats: [...(options.signalToolContext?.repeats ?? [])],
+    }
+  }
+
+  #isTerminalNode(nodeName: string): boolean {
+    return ![...this.#dependencies.values()].some((dependencies) =>
+      dependencies.has(nodeName),
+    )
   }
 
   async #runGraph(
@@ -945,8 +1022,9 @@ export class PipelineController {
       )
     }
     const childName = `${this.#swarmDefinition.name}.${graph.name}.attempt${attempt}`
+    await this.#clearGraphSignals(graph, options.workspace, false)
     const childResult = await this.#runChildGraph(
-      graph.name,
+      graph,
       graph.definition,
       childName,
       waveIndex,
@@ -1105,9 +1183,10 @@ export class PipelineController {
         ? {}
         : { maxRounds: graph.repeat.maxRounds }),
     })
+    await this.#clearGraphSignals(graph, options.workspace, true)
     const childName = `${this.#swarmDefinition.name}.${graph.name}.attempt${attempt}.round${round}`
     const childResult = await this.#runChildGraph(
-      graph.name,
+      graph,
       definition,
       childName,
       waveIndex,
@@ -1290,8 +1369,21 @@ export class PipelineController {
     )
   }
 
+  async #clearGraphSignals(
+    graph: SwarmGraphNode,
+    workspace: string,
+    includeRepeat: boolean,
+  ): Promise<void> {
+    if (graph.control !== undefined) {
+      await removeWorkspaceSignal(workspace, graph.control.signal)
+    }
+    if (includeRepeat && graph.repeat !== undefined) {
+      await removeWorkspaceSignal(workspace, graph.repeat.stopSignal)
+    }
+  }
+
   async #runChildGraph(
-    graphName: string,
+    graph: SwarmGraphNode,
     definition: SwarmDefinition,
     childName: string,
     waveIndex: number,
@@ -1306,7 +1398,7 @@ export class PipelineController {
       )
     }
     const waves = buildExecutionWaves(dependencies)
-    const childGraphPath = `${this.#graphPath}/${graphName}`
+    const childGraphPath = `${this.#graphPath}/${graph.name}`
     const stateTracker = await createInitializedStateTracker(
       options.workspace,
       childDefinition,
@@ -1324,13 +1416,16 @@ export class PipelineController {
       workspace: options.workspace,
       onProgress: () => {
         void this.#publishChildGraphState(
-          graphName,
+          graph.name,
           stateTracker,
           waveIndex,
           options,
         ).catch(ignoreProgressPersistenceError)
       },
     }
+    const signalToolContext = this.#buildGraphSignalToolContext(graph, options)
+    if (signalToolContext !== undefined)
+      runOptions.signalToolContext = signalToolContext
     if (options.signal !== undefined) runOptions.signal = options.signal
     if (options.modelRegistry !== undefined)
       runOptions.modelRegistry = options.modelRegistry
@@ -1339,7 +1434,7 @@ export class PipelineController {
       options.agentConcurrencyLimiter ?? this.#agentConcurrencyLimiter
     const result = await controller.run(runOptions)
     await this.#publishChildGraphState(
-      graphName,
+      graph.name,
       stateTracker,
       waveIndex,
       options,

@@ -11,7 +11,6 @@ swarm:
       type: agent
       role: planner
       task: |
-        Create directories signals, tracking, output, implementation/reports, review/reports, and reports if needed.
         Write reports/planner.md with exactly "planner ok".
         Write signals/planner.txt with exactly "OK".
       reports_to: [implementation, check_feedback]

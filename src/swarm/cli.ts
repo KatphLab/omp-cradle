@@ -30,8 +30,23 @@ import {
   loadPersistedModelRoutingPlan,
 } from './swarm/state'
 
+const RUN_DIRECTORY_NAMES = [
+  'signals',
+  'tracking',
+  'reports',
+  'output',
+] as const
+
 function writeLine(message = ''): void {
   process.stdout.write(`${message}\n`)
+}
+
+async function prepareRunDirectories(workspace: string): Promise<void> {
+  await Promise.all(
+    RUN_DIRECTORY_NAMES.map((name) =>
+      fs.mkdir(path.join(workspace, name), { recursive: true }),
+    ),
+  )
 }
 
 function usageLines(): string[] {
@@ -46,6 +61,9 @@ function usageLines(): string[] {
     '  restart <path-to-yaml>   Resume from prior state; starts fresh when no state is found',
     '  plan-models <path-to-yaml> Refresh the authenticated catalog and print a model plan without initializing state or running nodes',
     '  validate <path-to-yaml>  Validate a swarm YAML file without running it',
+    '',
+    'Run workspace:',
+    '  Creates signals/, tracking/, reports/, and output/ before execution',
     '',
     'Options:',
     '  -h, --help               Show this help',
@@ -232,7 +250,7 @@ try {
     process.exit(0)
   }
 
-  await fs.mkdir(workspace, { recursive: true })
+  await prepareRunDirectories(workspace)
   writeLine(`Workspace: ${workspace}`)
 
   const restartPlan = isRestartCommand

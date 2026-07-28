@@ -40,15 +40,15 @@ swarm:
 
         Acceptance / verification:
         - READY requires recreated handoffs/, reports/, and signals/ directories
-          and one valid control signal.
+          and a successful submit_control_decision call.
 
         Outputs / handoffs:
-        - Overwrite signals/prepare.control.yaml as control YAML for the runtime.
-        - Include action and reason; failure to write it fails this node.
+        - The runtime writes signals/prepare.control.yaml from the typed control
+          decision; failure to submit it fails this node.
 
         Control / correction:
-        - Write action: continue only for READY.
-        - Otherwise write action: fail with a safe reason and no target.
+        - Call submit_control_decision with action continue only for READY.
+        - Otherwise call it with action fail, a safe reason, and no target.
 
         Retry / failure:
         - Recheck anchors before cleanup; make directory recreation idempotent.
@@ -211,18 +211,20 @@ swarm:
         Outputs / handoffs:
         - Overwrite reports/review.md as Markdown with verdict, findings,
           evidence, required_mutation, correction_owner, and restart_target.
-        - Overwrite signals/review.control.yaml as one runtime control decision.
-        - Failure to produce either valid output fails this node.
+        - Submit exactly one runtime decision with submit_control_decision.
+        - Failure to produce the report or submit the decision fails this node.
 
         Control / correction:
-        - Continue only for ACCEPT.
-        - Restart target implement only for a confirmed owned correction that the
-          implement -> check -> review suffix can make false.
-        - Fail for missing evidence, unsafe scope, or unreachable correction.
+        - Call submit_control_decision with action continue only for ACCEPT.
+        - Call it with action restart, target implement, and a concrete reason
+          only for a confirmed owned correction that the implement -> check ->
+          review suffix can make false.
+        - Call it with action fail and a safe reason for missing evidence, unsafe
+          scope, or unreachable correction.
 
         Retry / failure:
         - Re-read current source and all current evidence; no files roll back.
-        - Supersede stale findings and overwrite both outputs atomically.
+        - Supersede stale findings, overwrite the report, and submit a fresh decision.
         - Preserve project and upstream files on failure.
       waits_for: [check]
       control:
