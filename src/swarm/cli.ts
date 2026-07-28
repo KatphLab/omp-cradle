@@ -206,7 +206,7 @@ try {
       let refreshedAt: number
       try {
         const authStorage = await discoverAuthStorage()
-        const settings = await Settings.loadReadOnly({ cwd: workspace })
+        const settings = await Settings.init({ cwd: workspace, readOnly: true })
         const modelRegistry = new ModelRegistry(authStorage)
         await modelRegistry.refresh('online-if-uncached')
         refreshedAt = Date.now()
@@ -278,7 +278,7 @@ try {
   const settings =
     routedSettings ??
     (containsAgents
-      ? await Settings.loadReadOnly({ cwd: workspace })
+      ? await Settings.init({ cwd: workspace, readOnly: true })
       : undefined)
 
   let lastProgressDump = 0
