@@ -48,7 +48,8 @@
       "./src/commit-command/index.ts",
       "./src/council/index.ts",
       "./src/swarm/index.ts",
-      "./src/system-prompt/index.ts"
+      "./src/system-prompt/index.ts",
+      "./src/tool-severity/index.ts"
     ],
     "skills": [
       "./skills"
