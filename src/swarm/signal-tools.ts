@@ -40,14 +40,18 @@ function registerControlDecisionTool(
   pi: ExtensionAPI,
   submitted: Set<string>,
 ): void {
-  const scope = pi.zod.string().trim().min(1).optional()
-  const reason = pi.zod.string().trim().min(1)
+  const nonEmptyString = pi.zod
+    .string()
+    .regex(/\S/)
+    .transform((value) => value.trim())
+  const scope = nonEmptyString.optional()
+  const reason = nonEmptyString
   pi.registerTool({
     name: 'submit_control_decision',
     label: 'Submit Swarm Control Decision',
     description:
       'Submit a validated continue, restart, or fail decision for the current swarm node. Omit scope when only one control channel is available.',
-    parameters: pi.zod.discriminatedUnion('action', [
+    parameters: pi.zod.union([
       pi.zod
         .object({
           action: pi.zod.literal('continue'),
@@ -59,7 +63,7 @@ function registerControlDecisionTool(
         .object({
           action: pi.zod.literal('restart'),
           scope,
-          target: pi.zod.string().trim().min(1),
+          target: nonEmptyString,
           reason,
         })
         .strict(),
@@ -113,7 +117,11 @@ function registerRepeatDecisionTool(
   pi: ExtensionAPI,
   submitted: Set<string>,
 ): void {
-  const scope = pi.zod.string().trim().min(1).optional()
+  const scope = pi.zod
+    .string()
+    .regex(/\S/)
+    .transform((value) => value.trim())
+    .optional()
   pi.registerTool({
     name: 'submit_repeat_decision',
     label: 'Submit Swarm Repeat Decision',

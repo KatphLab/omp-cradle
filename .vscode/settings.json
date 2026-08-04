@@ -20,5 +20,6 @@
   "workbench.localHistory.exclude": {
     "**/node_modules": true
   },
-  "files.exclude": {}
+  "files.exclude": {},
+  "js/ts.tsdk.path": "node_modules/@typescript/native-preview"
 }

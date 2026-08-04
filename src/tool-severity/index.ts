@@ -29,6 +29,7 @@ async function getRejectionMessage(
 
   const allowed = await confirmHighSeverityCommand(context, command, severity)
   if (allowed) return undefined
+  context.abort()
 
   rejectedCommands.add(rejectionKey)
   return `Blocked by user: ${severity}-severity command. Do not retry this command.`
@@ -102,7 +103,6 @@ export default function toolSeverityExtension(pi: ExtensionAPI): void {
     parameters: pi.zod.object({
       command: pi.zod.string().describe('The shell command to execute'),
       severity: pi.zod.enum(SEVERITIES).describe('Command severity'),
-      timeout: pi.zod.number().optional().describe('Timeout in seconds'),
     }),
     approval: 'exec',
     async execute(_toolCallId, parameters, signal, _onUpdate, context) {
@@ -130,9 +130,6 @@ export default function toolSeverityExtension(pi: ExtensionAPI): void {
 
         const result = await pi.exec('bash', ['-lc', parameters.command], {
           ...(signal === undefined ? {} : { signal }),
-          ...(parameters.timeout === undefined
-            ? {}
-            : { timeout: parameters.timeout * 1000 }),
         })
         const output =
           [result.stdout.trimEnd(), result.stderr.trimEnd()]
