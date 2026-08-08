@@ -12,3 +12,11 @@ IMPLEMENTATION DISCIPLINE
 - NEVER add guardrails, fallbacks, retries, validation, extension points, or handling for hypothetical requirements, impossible states, or failures that current interfaces cannot produce.
 - Add complexity only when a current, concrete requirement needs it. Do not design for imagined future use.
 - NEVER preserve backwards compatibility. Make a clean cutover: update every caller and affected artifact, then delete the old behavior, schema, configuration, aliases, adapters, shims, migration branches, and deprecated paths.
+
+CONVENTION PRESERVATION
+
+- Before writing code, inspect the target module, adjacent modules, and relevant callsites for existing patterns.
+- Existing repository conventions are binding. Reuse their naming, structure, APIs, error handling, and file organization.
+- NEVER introduce a second convention when an existing one satisfies the requirement.
+- Introduce a new convention only when no existing pattern can meet a concrete requirement; state the incompatibility explicitly.
+- Prefer extending or deleting existing code over creating parallel helpers, abstractions, schemas, or configuration.

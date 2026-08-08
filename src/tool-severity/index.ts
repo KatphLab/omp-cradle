@@ -1,4 +1,9 @@
-import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent'
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+  ExtensionContext,
+  ToolApprovalDecision,
+} from '@oh-my-pi/pi-coding-agent'
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'] as const
 
@@ -35,66 +40,174 @@ async function getRejectionMessage(
   return `Blocked by user: ${severity}-severity command. Do not retry this command.`
 }
 
-function editDeletionTargets(
-  input: Record<string, unknown>,
-  deletionCount: number,
-): string {
-  if (!Array.isArray(input['paths'])) return `${deletionCount} file(s)`
-  const paths = input['paths'].filter(
-    (path): path is string => typeof path === 'string',
-  )
-  return paths.length > 0 ? paths.join(', ') : `${deletionCount} file(s)`
+interface EditSeverityState {
+  rejected: Set<string>
+  pending: Map<string, string>
+  targetsByKey: Map<string, string>
 }
 
-function hasUIContext(value: unknown): value is Pick<ExtensionContext, 'ui'> {
-  return typeof value === 'object' && value !== null && 'ui' in value
+type NativeToolInvoker = (
+  input: Record<string, unknown>,
+) => Promise<AgentToolResult<unknown>>
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
-async function getEditDeletionRejection(
-  context: ExtensionContext,
-  input: Record<string, unknown>,
-  rejectedDeletions: Set<string>,
-): Promise<string | undefined> {
+function getEditDeletion(
+  input: unknown,
+): { deletionCount: number; rejectionKey: string } | undefined {
+  if (!isUnknownRecord(input)) return undefined
   const rawInput = input['input'] ?? input['_input']
   if (typeof rawInput !== 'string') return undefined
 
   const deletionCount = rawInput.match(/^REM\r?$/gmu)?.length ?? 0
-  if (deletionCount === 0) return undefined
-
-  const rejectionKey = rawInput.trim()
-  if (rejectedDeletions.has(rejectionKey)) {
-    return 'Blocked by user: this file deletion was previously rejected and cannot be retried'
-  }
-
-  const severity: BashSeverity = deletionCount === 1 ? 'high' : 'critical'
-  // Event-scoped dialogs inherit the handler's 30-second timeout. Human approval must not.
-  const baseContext: unknown = Object.getPrototypeOf(context)
-  const ui = hasUIContext(baseContext) ? baseContext.ui : context.ui
-  const allowed = await ui.confirm(
-    `High-severity edit: ${severity}`,
-    `Delete: ${editDeletionTargets(input, deletionCount)}\nDeclared severity: ${severity}`,
-  )
-  if (allowed) return undefined
-
-  rejectedDeletions.add(rejectionKey)
-  return `Blocked by user: ${severity}-severity file deletion. Do not retry this edit.`
+  return deletionCount === 0
+    ? undefined
+    : { deletionCount, rejectionKey: rawInput.trim() }
 }
 
-export default function toolSeverityExtension(pi: ExtensionAPI): void {
-  pi.setLabel('Tool Severity')
-  const rejectedCommands = new Set<string>()
-  const rejectedEditDeletions = new Set<string>()
+function editDeletionTargets(input: unknown, deletionCount: number): string {
+  if (!isUnknownRecord(input)) return `${deletionCount} file(s)`
+  const paths = input['paths']
+  if (!Array.isArray(paths)) return `${deletionCount} file(s)`
+  const stringPaths = paths.filter(
+    (path): path is string => typeof path === 'string',
+  )
+  return stringPaths.length > 0
+    ? stringPaths.join(', ')
+    : `${deletionCount} file(s)`
+}
 
-  pi.on('tool_call', async (event, context) => {
+function isNativeToolInvoker(value: unknown): value is NativeToolInvoker {
+  return typeof value === 'function'
+}
+
+async function invokeNativeEdit(
+  context: ExtensionContext,
+  parameters: Record<string, unknown>,
+): Promise<AgentToolResult<unknown>> {
+  const invokeTool = isUnknownRecord(context)
+    ? context['invokeTool']
+    : undefined
+  if (!isNativeToolInvoker(invokeTool)) {
+    throw new Error('Native edit tool is unavailable')
+  }
+  try {
+    return await invokeTool(parameters)
+  } catch (error_) {
+    throw error_ instanceof Error ? error_ : new Error(String(error_))
+  }
+}
+
+function registerEditSeverityHandlers(
+  pi: ExtensionAPI,
+  state: EditSeverityState,
+): void {
+  pi.on('tool_call', (event) => {
     if (event.toolName !== 'edit') return
-    const reason = await getEditDeletionRejection(
-      context,
-      event.input,
-      rejectedEditDeletions,
-    )
-    return reason === undefined ? undefined : { block: true, reason }
+    const deletion = getEditDeletion(event.input)
+    if (deletion === undefined) return
+
+    let result:
+      | {
+          block: true
+          reason: string
+        }
+      | undefined
+    if (state.rejected.has(deletion.rejectionKey)) {
+      result = {
+        block: true,
+        reason:
+          'Blocked by user: this file deletion was previously rejected and cannot be retried',
+      }
+    } else {
+      state.pending.set(event.toolCallId, deletion.rejectionKey)
+      state.targetsByKey.set(
+        deletion.rejectionKey,
+        editDeletionTargets(event.input, deletion.deletionCount),
+      )
+    }
+    return result
   })
 
+  pi.on('tool_approval_resolved', (event) => {
+    if (event.toolName !== 'edit') return
+    const rejectionKey = state.pending.get(event.toolCallId)
+    if (rejectionKey === undefined) return
+    state.pending.delete(event.toolCallId)
+    state.targetsByKey.delete(rejectionKey)
+    if (!event.approved) state.rejected.add(rejectionKey)
+  })
+}
+
+function registerEditSeverityTool(pi: ExtensionAPI): void {
+  const state: EditSeverityState = {
+    rejected: new Set<string>(),
+    pending: new Map<string, string>(),
+    targetsByKey: new Map<string, string>(),
+  }
+  registerEditSeverityHandlers(pi, state)
+
+  const nativeEdit = new pi.pi.EditTool({
+    cwd: process.cwd(),
+    hasUI: false,
+    getSessionFile: () => '',
+    getSessionSpawns: () => '',
+    settings: pi.pi.settings,
+  })
+  const nativeEditMetadata = {
+    concurrency: nativeEdit.concurrency,
+    customFormat: nativeEdit.customFormat,
+    examples: nativeEdit.examples,
+    loadMode: nativeEdit.loadMode,
+    strict: nativeEdit.strict,
+    matcherDigest: nativeEdit.matcherDigest.bind(nativeEdit),
+    matcherEntries: nativeEdit.matcherEntries.bind(nativeEdit),
+    matcherPaths: nativeEdit.matcherPaths.bind(nativeEdit),
+    formatApprovalDetails(input: unknown) {
+      const deletion = getEditDeletion(input)
+      if (deletion === undefined) {
+        return nativeEdit.formatApprovalDetails(input)
+      }
+      const severity = deletion.deletionCount === 1 ? 'high' : 'critical'
+      return [
+        `Delete: ${
+          state.targetsByKey.get(deletion.rejectionKey) ??
+          editDeletionTargets(input, deletion.deletionCount)
+        }`,
+        `Declared severity: ${severity}`,
+      ]
+    },
+  }
+
+  pi.registerTool({
+    ...nativeEditMetadata,
+    name: nativeEdit.name,
+    label: nativeEdit.label,
+    description: nativeEdit.description,
+    parameters: nativeEdit.parameters,
+    approval(input): ToolApprovalDecision {
+      const deletion = getEditDeletion(input)
+      if (deletion === undefined) {
+        return { tier: nativeEdit.approval(input) }
+      }
+      const severity = deletion.deletionCount === 1 ? 'high' : 'critical'
+      const decision = {
+        tier: 'write' as const,
+        policy: 'prompt' as const,
+        reason: `${severity}-severity file deletion`,
+      }
+      return decision
+    },
+    async execute(_toolCallId, parameters, _signal, _onUpdate, context) {
+      return invokeNativeEdit(context, parameters)
+    },
+  })
+}
+
+function registerBashSeverityTool(pi: ExtensionAPI): void {
+  const rejectedCommands = new Set<string>()
   pi.registerTool({
     name: 'bash',
     label: 'Bash',
@@ -154,4 +267,10 @@ export default function toolSeverityExtension(pi: ExtensionAPI): void {
       }
     },
   })
+}
+
+export default function toolSeverityExtension(pi: ExtensionAPI): void {
+  pi.setLabel('Tool Severity')
+  registerEditSeverityTool(pi)
+  registerBashSeverityTool(pi)
 }
