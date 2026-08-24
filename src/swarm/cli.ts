@@ -296,7 +296,7 @@ try {
   const settings =
     routedSettings ??
     (containsAgents
-      ? await Settings.init({ cwd: workspace, readOnly: true })
+      ? await Settings.loadReadOnly({ cwd: workspace })
       : undefined)
 
   let lastProgressDump = 0

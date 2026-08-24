@@ -40,10 +40,7 @@ function registerControlDecisionTool(
   pi: ExtensionAPI,
   submitted: Set<string>,
 ): void {
-  const nonEmptyString = pi.zod
-    .string()
-    .regex(/\S/)
-    .transform((value) => value.trim())
+  const nonEmptyString = pi.zod.string().regex(/\S/)
   const scope = nonEmptyString.optional()
   const reason = nonEmptyString
   pi.registerTool({
@@ -82,6 +79,9 @@ function registerControlDecisionTool(
       _onUpdate: undefined,
       ctx: ExtensionContext,
     ) {
+      if (params.scope !== undefined) params.scope = params.scope.trim()
+      if (params.action === 'restart') params.target = params.target.trim()
+      if (params.reason !== undefined) params.reason = params.reason.trim()
       assertNotAborted(signal)
       const context = await readSignalToolContext(
         ctx.sessionManager.getSessionFile() ?? undefined,
@@ -117,11 +117,7 @@ function registerRepeatDecisionTool(
   pi: ExtensionAPI,
   submitted: Set<string>,
 ): void {
-  const scope = pi.zod
-    .string()
-    .regex(/\S/)
-    .transform((value) => value.trim())
-    .optional()
+  const scope = pi.zod.string().regex(/\S/).optional()
   pi.registerTool({
     name: 'submit_repeat_decision',
     label: 'Submit Swarm Repeat Decision',
@@ -140,6 +136,7 @@ function registerRepeatDecisionTool(
       _onUpdate: undefined,
       ctx: ExtensionContext,
     ) {
+      if (params.scope !== undefined) params.scope = params.scope.trim()
       assertNotAborted(signal)
       const context = await readSignalToolContext(
         ctx.sessionManager.getSessionFile() ?? undefined,

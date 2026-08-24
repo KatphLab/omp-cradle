@@ -104,10 +104,10 @@ async function runCouncilWithModel(
   question: string,
   context: string | undefined,
   signal: AbortSignal | undefined,
-  ctx: { models: ExtensionContext['models'] } | undefined,
+  ctx: ExtensionContext | undefined,
 ): Promise<CouncilResult> {
   const model = resolveModel(ctx)
-  if (model === undefined) {
+  if (ctx === undefined || model === undefined) {
     return {
       verdict: '',
       voiceResults: [],
@@ -115,7 +115,14 @@ async function runCouncilWithModel(
         'No model available. Ensure pi/smol or a session model is configured.',
     }
   }
-  return await runCouncil({ question, context, model, signal })
+  const sessionId = ctx.sessionManager.getSessionId()
+  return await runCouncil({
+    question,
+    context,
+    model,
+    getApiKey: () => ctx.modelRegistry.resolver(model, sessionId),
+    signal,
+  })
 }
 
 // ─── Formatting ──────────────────────────────────────────────────────────────

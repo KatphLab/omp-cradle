@@ -31,6 +31,21 @@ pnpm dev
 
 Runs `src/index.ts` in watch mode with tsx.
 
+### System prompt evaluation
+
+Run the control-versus-treatment behavioral evaluation:
+
+```bash
+make eval-system-prompt
+```
+
+Each coding run is followed by an isolated, no-tools OMP judge that evaluates
+the complete before-and-after source for unnecessary complexity. The default
+runs all eight scenarios three times: 48 coding sessions plus 48 judge
+sessions. Limit a check with
+`RUNS=1 SCENARIO=existing-code-reuse make eval-system-prompt`. The JSON report
+is written to `report/system-prompt-eval.json`.
+
 ### Build
 
 ```bash

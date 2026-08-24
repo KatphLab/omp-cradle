@@ -2,8 +2,8 @@
  * Council orchestration: runs four voices in parallel using a fast (smol) model,
  * then synthesizes their analyses into a structured verdict.
  */
-import type { Context } from '@oh-my-pi/pi-ai'
-import { complete } from '@oh-my-pi/pi-ai'
+import type { ApiKey, Context } from '@oh-my-pi/pi-ai'
+import { completeSimple } from '@oh-my-pi/pi-ai'
 import type { Model } from '@oh-my-pi/pi-catalog/types'
 import { SYNTHESIS_PROMPT, VOICES } from './prompts'
 
@@ -50,6 +50,7 @@ function extractText(msg: { content: unknown[] }): string {
 /** Run a single voice and return its analysis. */
 async function runVoice(
   model: Model,
+  apiKey: ApiKey,
   voice: string,
   systemPrompt: string,
   question: string,
@@ -58,9 +59,9 @@ async function runVoice(
 ): Promise<VoiceResult> {
   try {
     const ctx = buildVoiceContext(systemPrompt, question, extraContext)
-    const opts: { signal?: AbortSignal } = {}
+    const opts: { apiKey: ApiKey; signal?: AbortSignal } = { apiKey }
     if (signal !== undefined) opts.signal = signal
-    const response = await complete(model, ctx, opts)
+    const response = await completeSimple(model, ctx, opts)
     const text = extractText(response)
     return { voice, text: text || '(no output)' }
   } catch (error: unknown) {
@@ -75,6 +76,7 @@ async function runVoice(
 /** Synthesize voice analyses into a structured verdict. */
 async function synthesize(
   model: Model,
+  apiKey: ApiKey,
   question: string,
   extraContext: string | undefined,
   voiceResults: VoiceResult[],
@@ -91,10 +93,10 @@ async function synthesize(
     extraContext === undefined ? '' : `Context:\n${extraContext}\n\n`
   const userMessage = `${contextBlock}Question: ${question}\n\n## Voice Analyses\n\n${voicesBlock}`
 
-  const opts: { signal?: AbortSignal } = {}
+  const opts: { apiKey: ApiKey; signal?: AbortSignal } = { apiKey }
   if (signal !== undefined) opts.signal = signal
 
-  const response = await complete(
+  const response = await completeSimple(
     model,
     {
       systemPrompt: [SYNTHESIS_PROMPT],
@@ -114,14 +116,23 @@ export async function runCouncil(params: {
   question: string
   context: string | undefined
   model: Model
+  getApiKey: () => ApiKey
   signal: AbortSignal | undefined
 }): Promise<CouncilResult> {
-  const { question, context, model, signal } = params
+  const { question, context, model, getApiKey, signal } = params
 
   // Run all voices in parallel
   const voiceResults = await Promise.all(
     VOICES.map((v) =>
-      runVoice(model, v.name, v.systemPrompt, question, context, signal),
+      runVoice(
+        model,
+        getApiKey(),
+        v.name,
+        v.systemPrompt,
+        question,
+        context,
+        signal,
+      ),
     ),
   )
 
@@ -142,6 +153,7 @@ export async function runCouncil(params: {
   try {
     const verdict = await synthesize(
       model,
+      getApiKey(),
       question,
       context,
       voiceResults,

@@ -1,5 +1,4 @@
 import type {
-  AgentToolResult,
   ExtensionAPI,
   ExtensionContext,
   ToolApprovalDecision,
@@ -46,10 +45,6 @@ interface EditSeverityState {
   targetsByKey: Map<string, string>
 }
 
-type NativeToolInvoker = (
-  input: Record<string, unknown>,
-) => Promise<AgentToolResult<unknown>>
-
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -77,27 +72,6 @@ function editDeletionTargets(input: unknown, deletionCount: number): string {
   return stringPaths.length > 0
     ? stringPaths.join(', ')
     : `${deletionCount} file(s)`
-}
-
-function isNativeToolInvoker(value: unknown): value is NativeToolInvoker {
-  return typeof value === 'function'
-}
-
-async function invokeNativeEdit(
-  context: ExtensionContext,
-  parameters: Record<string, unknown>,
-): Promise<AgentToolResult<unknown>> {
-  const invokeTool = isUnknownRecord(context)
-    ? context['invokeTool']
-    : undefined
-  if (!isNativeToolInvoker(invokeTool)) {
-    throw new Error('Native edit tool is unavailable')
-  }
-  try {
-    return await invokeTool(parameters)
-  } catch (error_) {
-    throw error_ instanceof Error ? error_ : new Error(String(error_))
-  }
 }
 
 function registerEditSeverityHandlers(
@@ -160,7 +134,6 @@ function registerEditSeverityTool(pi: ExtensionAPI): void {
     concurrency: nativeEdit.concurrency,
     customFormat: nativeEdit.customFormat,
     examples: nativeEdit.examples,
-    loadMode: nativeEdit.loadMode,
     strict: nativeEdit.strict,
     matcherDigest: nativeEdit.matcherDigest.bind(nativeEdit),
     matcherEntries: nativeEdit.matcherEntries.bind(nativeEdit),
@@ -200,8 +173,18 @@ function registerEditSeverityTool(pi: ExtensionAPI): void {
       }
       return decision
     },
-    async execute(_toolCallId, parameters, _signal, _onUpdate, context) {
-      return invokeNativeEdit(context, parameters)
+    async execute(_toolCallId, parameters, signal, onUpdate, context) {
+      if (context.invokeTool === undefined) {
+        throw new Error('Native edit tool is unavailable')
+      }
+      try {
+        return await context.invokeTool(parameters, {
+          ...(signal === undefined ? {} : { signal }),
+          ...(onUpdate === undefined ? {} : { onUpdate }),
+        })
+      } catch (error_) {
+        throw error_ instanceof Error ? error_ : new Error(String(error_))
+      }
     },
   })
 }
@@ -218,7 +201,13 @@ function registerBashSeverityTool(pi: ExtensionAPI): void {
       severity: pi.zod.enum(SEVERITIES).describe('Command severity'),
     }),
     approval: 'exec',
-    async execute(_toolCallId, parameters, signal, _onUpdate, context) {
+    async execute(
+      _toolCallId,
+      parameters: { command: string; severity: BashSeverity },
+      signal,
+      _onUpdate,
+      context,
+    ) {
       try {
         const rejectionMessage = await getRejectionMessage(
           context,
