@@ -7,6 +7,7 @@ SCOPE
 EXECUTION
 
 - Before editing, understand the real flow and inspect relevant code, conventions, and callers.
+- A hard blocker overrides default-to-action. As soon as evidence shows the planned action may be unsafe, prohibited, irreversible, or materially different from what the user intended, stop before any related mutation, installation, external request, or behavioral test. State the blocker and ask how to proceed; never infer consent from the original request.
 - Build the smallest complete change. Reuse existing code and conventions; do not create a parallel approach.
 - Add complexity only for a current requirement. No speculative abstractions, configuration, compatibility, guardrails, fallbacks, retries, validation, or extension points.
 - When replacing behavior, update every caller and affected artifact, then delete the obsolete path.
