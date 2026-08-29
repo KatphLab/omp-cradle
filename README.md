@@ -1,99 +1,96 @@
 # omp-cradle
 
-A TypeScript workspace for building Oh My Pi extensions with local static-analysis tooling only.
+A local [Oh My Pi](https://github.com/can1357/oh-my-pi) extension package for practical coding workflows: smaller changes, explicit tool risk, independent reviews, and reusable multi-agent pipelines.
 
-## Features
+## Included
 
-- **[TypeScript](https://www.typescriptlang.org)** with strict configuration for Node.js
-- **[tsx](https://github.com/privatenumber/tsx)** for fast TypeScript execution in development
-- **Code Quality**: ESLint, Prettier, Husky, lint-staged
-- **Architecture Enforcement**: ESLint boundaries, dependency-cruiser, knip
-- **Security**: ESLint security rules and duplicate code detection
+| Capability               | What it does                                                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Practical system prompt  | Adds minimal-engineering guidance and live Git context to each agent run.                                               |
+| Tool severity            | Requires a severity for shell commands, confirms high-risk operations, and guards destructive edits.                    |
+| `/commit`                | Runs OMP's commit workflow with `--dry-run`, `--push`, and `--no-changelog` support.                                    |
+| `/council` and `council` | Runs four independent `pi/smol` perspectives, then synthesizes a verdict.                                               |
+| `/multi-review`          | Runs read-only reviewers on the `pi/smol`, `pi/default`, and `pi/slow` model aliases, then deduplicates their findings. |
+| `/swarm` and `omp-swarm` | Validates, runs, resumes, and inspects YAML-defined agent, shell, and nested-graph pipelines.                           |
+| Swarm skills             | Guides agents that write or review OMP swarm DAGs.                                                                      |
 
-## Getting Started
+## Requirements
 
-### Prerequisites
+- [Bun](https://bun.sh) 1.3.14
+- Node.js 24
+- An OMP installation compatible with `@oh-my-pi/pi-coding-agent` 17.2
 
-- Node.js >=24.0.0 <25 (managed via `packageManager: pnpm@10.33.4`)
-- pnpm (Corepack enabled)
+## Setup
 
-### Installation
+From this checkout:
 
 ```bash
-pnpm install
+bun install
+omp plugin link .
 ```
 
-### Development
+Start a new OMP session to load the linked package. During extension development, run `/reload-plugins` in an existing session after changing source files.
+
+To load the checkout for one session without linking it:
 
 ```bash
-pnpm dev
+omp --extension .
 ```
 
-Runs `src/index.ts` in watch mode with tsx.
+## Usage
 
-### System prompt evaluation
+### Practical commands
 
-Run the control-versus-treatment behavioral evaluation:
+```text
+/commit --dry-run
+/council Should this state live in the session or the workspace?
+/multi-review Review the current branch against main
+```
+
+`/multi-review` only provides model diversity when the `pi/smol`, `pi/default`, and `pi/slow` roles resolve to different models. Configure those roles in `/model` → **Roles**.
+
+### Swarms
+
+Run a DAG inside OMP:
+
+```text
+/swarm run path/to/pipeline.yaml
+/swarm status pipeline-name
+/swarm restart path/to/pipeline.yaml --from review
+```
+
+Or use the standalone CLI:
+
+```bash
+omp-swarm validate path/to/pipeline.yaml
+omp-swarm plan-models path/to/pipeline.yaml
+omp-swarm path/to/pipeline.yaml
+omp-swarm restart path/to/pipeline.yaml --from review
+```
+
+A swarm is a YAML dependency graph of agent, shell, or nested graph nodes. Runs persist state in the configured workspace, allowing targeted restarts with `--reuse`, `--rerun`, or `--from`.
+
+Use [`src/swarm/dag.schema.json`](./src/swarm/dag.schema.json) for editor validation. Working definitions live in [`src/swarm/sample-graphs`](./src/swarm/sample-graphs), and the bundled [`writing-omp-swarm-dags`](./skills/writing-omp-swarm-dags/SKILL.md) and [`reviewing-omp-swarm-dags`](./skills/reviewing-omp-swarm-dags/SKILL.md) skills document the authoring constraints.
+
+## Development
+
+```bash
+bun fix    # apply formatting, lint, and Knip fixes
+bun check  # format, lint, typecheck, architecture, dead-code, and duplication checks
+```
+
+Run the system-prompt behavior evaluation with:
 
 ```bash
 make eval-system-prompt
 ```
 
-Each coding run is followed by an isolated, no-tools OMP judge that evaluates
-the complete before-and-after source for unnecessary complexity. The default
-runs all eight scenarios three times: 48 coding sessions plus 48 judge
-sessions. Limit a check with
-`RUNS=1 SCENARIO=existing-code-reuse make eval-system-prompt`. The JSON report
-is written to `report/system-prompt-eval.json`.
-
-### Build
+For a quick single-scenario run:
 
 ```bash
-pnpm build
+RUNS=1 SCENARIO=existing-code-reuse make eval-system-prompt
 ```
 
-Compiles TypeScript to `dist/` using `tsc`.
+The evaluation writes `report/system-prompt-eval.json`.
 
-### Run
-
-```bash
-pnpm start
-```
-
-Executes the compiled output from `dist/`.
-
-## Scripts
-
-| Script              | Description                                                                   |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `pnpm dev`          | Run in development with tsx watch                                             |
-| `pnpm build`        | Compile TypeScript to dist/                                                   |
-| `pnpm start`        | Run compiled output                                                           |
-| `pnpm lint`         | Run ESLint                                                                    |
-| `pnpm lint:fix`     | Fix ESLint issues                                                             |
-| `pnpm typecheck`    | Run TypeScript compiler (no emit)                                             |
-| `pnpm format`       | Format code with Prettier                                                     |
-| `pnpm format:check` | Check formatting                                                              |
-| `pnpm check`        | **Full quality gate**: format, lint, typecheck, depcruise, knip, and dupcheck |
-| `pnpm fix`          | Auto-fix issues: format, lint, knip                                           |
-| `pnpm depcruise`    | Check architecture boundaries                                                 |
-| `pnpm knip`         | Find unused dependencies/exports                                              |
-| `pnpm dupcheck`     | Check for code duplication                                                    |
-
-## Quality Gates
-
-This repository enforces local static checks:
-
-- **Type safety**: TypeScript runs with strict compiler settings
-- **Architecture boundaries**: Enforced via ESLint and dependency-cruiser
-- **No code duplication**: jscpd detects copy-pasted code
-
-Run `pnpm check` locally before sharing changes.
-
-## AI Agent Guidelines
-
-See [AGENTS.md](./AGENTS.md) for coding rules and conventions when using AI assistants.
-
-## License
-
-MIT
+See [`AGENTS.md`](./AGENTS.md) for repository contribution rules.
