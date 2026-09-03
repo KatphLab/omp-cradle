@@ -12,8 +12,11 @@ async function confirmHighSeverityCommand(
   context: ExtensionContext,
   command: string,
   severity: BashSeverity,
+  promptsEnabled: boolean,
 ): Promise<boolean> {
-  if (severity !== 'high' && severity !== 'critical') return true
+  if (!promptsEnabled || (severity !== 'high' && severity !== 'critical')) {
+    return true
+  }
   return context.ui.confirm(
     `High-severity command: ${severity}`,
     `Command: ${command}\nDeclared severity: ${severity}`,
@@ -25,13 +28,19 @@ async function getRejectionMessage(
   command: string,
   severity: BashSeverity,
   rejectedCommands: Set<string>,
+  promptsEnabled: boolean,
 ): Promise<string | undefined> {
   const rejectionKey = command.trim()
   if (rejectedCommands.has(rejectionKey)) {
     return 'Blocked by user: this command was previously rejected and cannot be retried'
   }
 
-  const allowed = await confirmHighSeverityCommand(context, command, severity)
+  const allowed = await confirmHighSeverityCommand(
+    context,
+    command,
+    severity,
+    promptsEnabled,
+  )
   if (allowed) return undefined
   context.abort()
 
@@ -39,7 +48,8 @@ async function getRejectionMessage(
   return `Blocked by user: ${severity}-severity command. Do not retry this command.`
 }
 
-interface EditSeverityState {
+interface ToolSeverityState {
+  promptsEnabled: boolean
   rejected: Set<string>
   pending: Map<string, string>
   targetsByKey: Map<string, string>
@@ -76,7 +86,7 @@ function editDeletionTargets(input: unknown, deletionCount: number): string {
 
 function registerEditSeverityHandlers(
   pi: ExtensionAPI,
-  state: EditSeverityState,
+  state: ToolSeverityState,
 ): void {
   pi.on('tool_call', (event) => {
     if (event.toolName !== 'edit') return
@@ -115,12 +125,10 @@ function registerEditSeverityHandlers(
   })
 }
 
-function registerEditSeverityTool(pi: ExtensionAPI): void {
-  const state: EditSeverityState = {
-    rejected: new Set<string>(),
-    pending: new Map<string, string>(),
-    targetsByKey: new Map<string, string>(),
-  }
+function registerEditSeverityTool(
+  pi: ExtensionAPI,
+  state: ToolSeverityState,
+): void {
   registerEditSeverityHandlers(pi, state)
 
   const nativeEdit = new pi.pi.EditTool({
@@ -165,13 +173,15 @@ function registerEditSeverityTool(pi: ExtensionAPI): void {
       if (deletion === undefined) {
         return { tier: nativeEdit.approval(input) }
       }
+      if (!state.promptsEnabled) {
+        return { tier: 'write', policy: 'allow', override: true }
+      }
       const severity = deletion.deletionCount === 1 ? 'high' : 'critical'
-      const decision = {
-        tier: 'write' as const,
-        policy: 'prompt' as const,
+      return {
+        tier: 'write',
+        policy: 'prompt',
         reason: `${severity}-severity file deletion`,
       }
-      return decision
     },
     async execute(_toolCallId, parameters, signal, onUpdate, context) {
       if (context.invokeTool === undefined) {
@@ -189,7 +199,10 @@ function registerEditSeverityTool(pi: ExtensionAPI): void {
   })
 }
 
-function registerBashSeverityTool(pi: ExtensionAPI): void {
+function registerBashSeverityTool(
+  pi: ExtensionAPI,
+  state: ToolSeverityState,
+): void {
   const rejectedCommands = new Set<string>()
   pi.registerTool({
     name: 'bash',
@@ -200,7 +213,10 @@ function registerBashSeverityTool(pi: ExtensionAPI): void {
       command: pi.zod.string().describe('The shell command to execute'),
       severity: pi.zod.enum(SEVERITIES).describe('Command severity'),
     }),
-    approval: 'exec',
+    approval: () =>
+      state.promptsEnabled
+        ? 'exec'
+        : { tier: 'exec', policy: 'allow', override: true },
     async execute(
       _toolCallId,
       parameters: { command: string; severity: BashSeverity },
@@ -214,6 +230,7 @@ function registerBashSeverityTool(pi: ExtensionAPI): void {
           parameters.command,
           parameters.severity,
           rejectedCommands,
+          state.promptsEnabled,
         )
         if (rejectionMessage !== undefined) {
           return {
@@ -260,6 +277,33 @@ function registerBashSeverityTool(pi: ExtensionAPI): void {
 
 export default function toolSeverityExtension(pi: ExtensionAPI): void {
   pi.setLabel('Tool Severity')
-  registerEditSeverityTool(pi)
-  registerBashSeverityTool(pi)
+  const state: ToolSeverityState = {
+    promptsEnabled: true,
+    rejected: new Set<string>(),
+    pending: new Map<string, string>(),
+    targetsByKey: new Map<string, string>(),
+  }
+
+  pi.registerCommand('tool-severity', {
+    description: 'Enable or disable severity prompts for this session',
+    handler: (args, context) => {
+      const setting = args.trim().toLowerCase()
+      if (setting !== 'on' && setting !== 'off') {
+        context.ui.notify('Usage: /tool-severity <on|off>', 'error')
+        return Promise.resolve()
+      }
+      state.promptsEnabled = setting === 'on'
+      context.ui.notify(
+        `Tool severity prompts ${state.promptsEnabled ? 'enabled' : 'disabled'}`,
+        'info',
+      )
+      return Promise.resolve()
+    },
+  })
+  pi.on('session_switch', () => {
+    state.promptsEnabled = true
+  })
+
+  registerEditSeverityTool(pi, state)
+  registerBashSeverityTool(pi, state)
 }

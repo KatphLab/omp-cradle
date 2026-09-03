@@ -45,7 +45,10 @@ omp --extension .
 /commit --dry-run
 /council Should this state live in the session or the workspace?
 /multi-review Review the current branch against main
+/tool-severity off
 ```
+
+Use `/tool-severity off` to suppress severity confirmation prompts for the current session. Use `/tool-severity on` to restore them; prompts reset to enabled when switching sessions.
 
 `/multi-review` only provides model diversity when the `pi/smol`, `pi/default`, and `pi/slow` roles resolve to different models. Configure those roles in `/model` → **Roles**.
 
