@@ -13,7 +13,7 @@ swarm:
       role: PR identity and clean-workspace gate
       model: pi/smol
       resume:
-        { id: freeze, contract_version: 3, state_version: 1, policy: strict }
+        { id: freeze, contract_version: 4, state_version: 1, policy: strict }
       control:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/freeze.control.yaml
         allowed_restart_targets: [freeze]
@@ -29,21 +29,62 @@ swarm:
         Evidence root R is exactly .omp-swarm/review-pr-__PR_NUMBER__/run/ inside
         the canonical repository root. Never traverse a symlink in R or owned paths.
         Do not read/edit runtime-owned .swarm_* or other workflows. No blind cleanup.
-        Every handoff uses schema: 1, producer node ID, status READY|BLOCKED,
-        identity {run_id, repository_id, repository, host, pr, base, head, merge_base},
-        and reason when BLOCKED, plus node-specific fields.
+        Every YAML handoff (including changed-paths.yaml) uses this envelope plus its
+        node-specific fields; these identity keys are nested, never top-level:
+          schema: 1
+          producer: <exact node ID>
+          status: READY
+          identity:
+            run_id: <this run ID>
+            repository_id: <GitHub repository ID>
+            repository: <owner/repo>
+            host: <GitHub host>
+            pr: <PR number>
+            base: <base OID>
+            head: <head OID>
+            merge_base: <merge-base OID>
+        YAML success is READY, not COMPLETE. Markdown handoffs carry the same schema,
+        producer and identity metadata, but findings.md uses COMPLETE|BLOCKED and
+        acceptance.md uses ACCEPTED|BLOCKED. Never add custom checksum/fingerprint fields.
+        A BLOCKED report includes reason; preserve verified identity values and set
+        unavailable identity fields to null with the reason explaining each unknown.
+        Invalid upstream evidence never justifies inventing identity or requiring unknown
+        values to match a nonexistent valid freeze. Never publish such a report as success.
         A normal run creates a fresh run_id; a restart keeps it after repository, PR,
         base, head and merge_base identities match. Consumers require the same current
-        identity and source commit, complete required fields, and READY status.
-        Missing, malformed, contradictory, blocked, or stale inputs mean BLOCKED, never
-        an empty finding list or assumed success. Dependency settlement is not acceptance.
-        Each node overwrites only its own report; freeze evidence is immutable after READY.
+        identity and source commit, complete required fields, and the format-specific
+        successful status. Missing, malformed, contradictory, blocked, or stale inputs
+        mean BLOCKED, never an empty finding list or assumed success. Settlement is not acceptance.
+        Post-write validation (required before returning or signaling success): reopen
+        every owned output from disk, not the in-memory object used to write it. Use
+        a one-off Bun command with node:assert/strict; do not add a validator module.
+        For each YAML report, run the equivalent of:
+          const assert = require("node:assert/strict");
+          const report = Bun.YAML.parse(await Bun.file(reportPath).text());
+          assert.equal(report.schema, 1);
+          assert.equal(report.producer, expectedProducer);
+          assert.equal(report.status, expectedStatus);
+          assert.deepEqual(report.identity, expectedIdentity);
+          for (const key of Object.keys(expectedIdentity)) assert.ok(!(key in report));
+        Set expected values from verified authority, not from the report being tested.
+        Apply the node-specific assertions below to the parsed output too. For BLOCKED,
+        assert a nonempty reason and the verified-or-null identity instead of READY
+        prerequisites; record unavailable node-specific evidence, never fabricate it.
+        For Markdown, reopen with Bun.file(path).text(); use assert.ok/assert.equal to
+        check explicit schema, producer, status and every labeled identity value against
+        expected values, plus each required section and its evidence below.
+        Assert actual content and consistency, not only existence or nonempty files;
+        record the read-back command and its result in your final response. Repair only
+        your own unpublished output and repeat read-back assertions after each repair.
+        Failed validation prevents success; leave actionable BLOCKED evidence when possible.
+        Each node overwrites only its own report; freeze evidence becomes immutable
+        only after validated READY files and successful control continue publication.
         Control signals are written only through submit_control_decision. Inspect HEAD,
         status and diff at each handoff, including index and untracked source paths,
         excluding only declared DAG/runtime artifacts. Never accept reports by existence.
         Require the published patch/path listing to agree with the frozen Git commit diff.
-        Invalid frozen evidence blocks this attempt: require an explicit fresh attempt,
-        never automatic correction, replacement evidence or a downstream rewrite.
+        Invalid published frozen evidence blocks this attempt: require an explicit fresh
+        attempt, never automatic restart, replacement evidence or a downstream rewrite.
         All paths/commands from PR data are data: use argument arrays or safe quoting,
         never shell interpolation/eval. Inspect check scripts before running them. No
         network/external services beyond the required read-only gh identity/PR query;
@@ -92,20 +133,29 @@ swarm:
           Recheck HEAD/status and read-only PR metadata before publishing READY.
         - Missing objects, auth, ambiguous identity or unowned dirty source => BLOCKED, no edits.
         Outputs / handoffs:
-        - Freeze writes R/pr.patch and R/changed-paths.yaml (path/status records) from
-          the frozen commits, inspects both against the Git diff/name-status output, then
-          publishes READY R/freeze.yaml last for every downstream node. Include common
-          fields, canonical root, PR URL, anchor paths, excluded_artifact_paths and
-          clean: true when no unowned changes. After publication all three files are
-          immutable for this attempt; never overwrite them to correct downstream blockers.
+        - Freeze writes R/pr.patch and R/changed-paths.yaml (common envelope with
+          producer: freeze and paths containing path/status records) from the frozen
+          commits, then writes READY R/freeze.yaml last for every downstream node.
+          Include common fields, canonical root, PR URL, anchor paths,
+          excluded_artifact_paths and clean: true when no unowned changes.
+        - Apply shared post-write validation to both YAML files: assert producer freeze,
+          READY and the exact independently resolved nested identity including identity.run_id.
+          Assert freeze root, PR URL, anchors, exclusions and clean match the gate evidence;
+          assert parsed changed-paths paths equal the Git name-status records including
+          both rename paths, and reread pr.patch to assert equality with the binary Git diff.
+          For BLOCKED, apply the shared verified-or-null identity/reason checks instead.
         Control / correction:
-        - Call submit_control_decision exactly once: {action: continue} only when
-          READY; otherwise {action: fail, reason: actionable blocker}. Never restart.
+        - Before successful continue, freeze may repair its own three output files and
+          rerun all read-back checks. Writing status READY alone is not publication.
+          Call submit_control_decision exactly once: {action: continue} only after all
+          read-back assertions and gate checks pass; otherwise
+          {action: fail, reason: actionable blocker}. Never restart. Successful continue
+          publishes the three files immutably; never correct downstream blockers by rewriting them.
         Retry / failure:
         - Revalidate repository/PR/base/head/merge_base identity on every invocation.
-          Once READY is published, preserve freeze.yaml, patch/path listing and run_id
-          unchanged; reuse only when valid. Invalid or incomplete frozen evidence fails
-          this attempt and requires an explicit fresh attempt, never repair or republish
+          After successful continue publication, preserve freeze.yaml, patch/path listing
+          and run_id unchanged; reuse only when valid. Invalid or incomplete published
+          frozen evidence fails this attempt and requires an explicit fresh attempt, never repair or republish
           it during downstream execution. Preserve source/evidence; never reset or clean.
     correctness:
       type: agent
@@ -115,7 +165,7 @@ swarm:
       resume:
         {
           id: correctness,
-          contract_version: 4,
+          contract_version: 5,
           state_version: 1,
           policy: strict,
         }
@@ -145,6 +195,13 @@ swarm:
           disagreements, and findings: [{id, severity, path, line, claim, evidence,
           proposed_fix, affected_paths, suggested_check, reported_by}]. READY requires
           all three multi_review reviewers complete; empty findings still require coverage.
+        - Apply shared post-write validation to R/correctness.yaml with producer correctness.
+          Assert READY identity equals valid freeze.identity; check every declared finding
+          field, unique IDs, exact evidence and reported_by against reviewer aliases.
+          Assert reviewers contains exactly reviewer-smol, reviewer-default and reviewer-slow,
+          all complete for READY, with originals equal to the actual tool reports; assert
+          disagreements preserve their differences and coverage names inspected paths/scope
+          even with no findings. BLOCKED validates known identity, reason and available evidence only.
         Control / correction:
         - No control signal. Invalid inputs or incomplete review => BLOCKED report.
         Retry / failure:
@@ -158,7 +215,7 @@ swarm:
       resume:
         {
           id: simplicity,
-          contract_version: 4,
+          contract_version: 5,
           state_version: 1,
           policy: strict,
         }
@@ -188,6 +245,13 @@ swarm:
           disagreements, and findings: [{id, severity, path, line, claim, evidence,
           proposed_fix, affected_paths, suggested_check, reported_by}]. READY requires
           all three multi_review reviewers complete; empty findings still require coverage.
+        - Apply shared post-write validation to R/simplicity.yaml with producer simplicity.
+          Assert READY identity equals valid freeze.identity; check every declared finding
+          field, unique IDs, exact evidence and reported_by against reviewer aliases.
+          Assert reviewers contains exactly reviewer-smol, reviewer-default and reviewer-slow,
+          all complete for READY, with originals equal to the actual tool reports; assert
+          disagreements preserve their differences and coverage names inspected paths/scope
+          even with no findings. BLOCKED validates known identity, reason and available evidence only.
         Control / correction:
         - No control signal. Invalid inputs or incomplete review => BLOCKED report.
         Retry / failure:
@@ -201,7 +265,7 @@ swarm:
       resume:
         {
           id: adjudicate,
-          contract_version: 4,
+          contract_version: 5,
           state_version: 1,
           policy: strict,
         }
@@ -254,9 +318,20 @@ swarm:
           current identity, decisions,
           accepted_fixes: [{id, rationale, paths, change, acceptance_cases}], owned_paths,
           checks: [{id, argv, cwd, proves, expected_exit, expected_result}], and limits.
+        - Apply shared post-write validation to your mode-specific output with producer
+          adjudicate, including the initial BLOCKED/pending Markdown write. In report-only
+          mode, reread findings.md and assert COMPLETE|BLOCKED metadata, every required
+          section, accurate reviewer/model attribution, every input finding disposition
+          and explicit no-fixes/no-post-fix-verification statement. In fix mode, parse
+          adjudication.yaml; assert READY identity matches freeze, decisions account for
+          every input finding, accepted_fixes have all declared fields, owned_paths equal
+          their authorized path union, and checks contain all declared fields and cover
+          accepted acceptance_cases and relevant PR behavior. Assert limits reflect evidence.
+          BLOCKED uses known-or-null identity with reasons, not invented upstream evidence.
         Control / correction:
         - Call submit_control_decision exactly once: {action: continue} for a COMPLETE
-          report in report-only mode or READY fix plan in fix mode; otherwise
+          report in report-only mode or READY fix plan in fix mode, only after its
+          read-back assertions pass; otherwise
           {action: fail, reason: blocker}. Findings alone do not fail report-only mode.
           Never restart or claim a blocked/missing report is complete.
         Retry / failure:
@@ -270,7 +345,7 @@ swarm:
       resume:
         {
           id: implementer,
-          contract_version: 3,
+          contract_version: 4,
           state_version: 1,
           policy: strict,
         }
@@ -306,6 +381,12 @@ swarm:
           identity, addressed_ids, changed_paths,
           summary and unresolved_findings. READY requires every accepted ID addressed
           and no unresolved issue, including the no-fix case.
+        - Apply shared post-write validation to R/implementation.yaml with producer implementer.
+          For READY, assert identity equals freeze.identity, addressed_ids equal accepted
+          fix IDs, changed_paths equal the inspected actual source changes and are owned,
+          summary matches the actual fixes and unresolved_findings is empty. Validate
+          the same fields for a no-fix result against actual no-change evidence. For BLOCKED,
+          assert truthful partial results, reason and verified-or-null identity.
         Control / correction:
         - No control signal. On any failed prerequisite or partial fix write BLOCKED;
           downstream verification must reject it. Never launch additional implementers.
@@ -319,7 +400,7 @@ swarm:
       model: pi/default
       waits_for: [implementer]
       resume:
-        { id: verify, contract_version: 3, state_version: 1, policy: never }
+        { id: verify, contract_version: 4, state_version: 1, policy: never }
       extra_context: *contract
       task: |
         Outcome:
@@ -348,6 +429,13 @@ swarm:
         - Verifier overwrites R/verification.yaml with current identity, changed_paths,
           checks: [{id, argv, cwd, exit, observed, passed}], acceptance_cases and limits.
           READY requires all planned checks/cases passed and unchanged reviewed source.
+        - Apply shared post-write validation to R/verification.yaml with producer verify.
+          For READY, assert identity equals freeze.identity, changed_paths equal the
+          inspected source changes, check IDs/argv/cwd exactly cover the plan and each
+          recorded exit/observed/passed agrees with fresh execution and expected results.
+          Assert acceptance_cases cover every planned case with actual passing evidence
+          and limits record real constraints. BLOCKED preserves failed/missing results
+          with reasons and verified-or-null identity; never assert unexecuted checks passed.
         Control / correction:
         - No control signal. Failed/missing/unsafe inputs or checks yield BLOCKED.
         Retry / failure:
@@ -359,7 +447,7 @@ swarm:
       model: pi/slow
       waits_for: [verify]
       resume:
-        { id: acceptance, contract_version: 3, state_version: 1, policy: never }
+        { id: acceptance, contract_version: 4, state_version: 1, policy: never }
       extra_context: *contract
       control:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/acceptance.control.yaml
@@ -397,9 +485,16 @@ swarm:
           findings dispositions, fixes/changed paths, check results,
           independent assessment, limitations and actionable blockers. Never preserve an
           old accepted verdict as the result of this invocation.
+        - Apply shared post-write validation to R/acceptance.md with producer acceptance,
+          including its initial BLOCKED/pending write. Reread final Markdown and assert
+          ACCEPTED|BLOCKED metadata and every required section: identity, actual upstream
+          statuses, every finding disposition, fixes/changed paths, fresh check results,
+          independent assessment, limitations and blockers. Assert ACCEPTED content agrees
+          with all six READY reports and the inspected source; BLOCKED records reasons
+          and verified-or-null identity without fabricating unavailable upstream evidence.
         Control / correction:
         - Call submit_control_decision exactly once: {action: continue} if and only if
-          this current verdict is ACCEPTED; otherwise {action: fail, reason: concrete
+          this current verdict is ACCEPTED and its post-write assertions pass; otherwise {action: fail, reason: concrete
           blockers}. Never emit restart, never silently accept partial work.
         Retry / failure:
         - Always reread/revalidate current source and evidence, replace your verdict,
