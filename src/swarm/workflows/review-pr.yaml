@@ -13,7 +13,7 @@ swarm:
       role: PR identity and clean-workspace gate
       model: pi/smol
       resume:
-        { id: freeze, contract_version: 2, state_version: 1, policy: strict }
+        { id: freeze, contract_version: 3, state_version: 1, policy: strict }
       control:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/freeze.control.yaml
         allowed_restart_targets: [freeze]
@@ -31,16 +31,19 @@ swarm:
         Do not read/edit runtime-owned .swarm_* or other workflows. No blind cleanup.
         Every handoff uses schema: 1, producer node ID, status READY|BLOCKED,
         identity {run_id, repository_id, repository, host, pr, base, head, merge_base},
-        current_source_fingerprint and reason when BLOCKED, plus node-specific fields.
+        and reason when BLOCKED, plus node-specific fields.
         A normal run creates a fresh run_id; a restart keeps it after repository, PR,
         base, head and merge_base identities match. Consumers require the same current
         identity and source commit, complete required fields, and READY status.
         Missing, malformed, contradictory, blocked, or stale inputs mean BLOCKED, never
         an empty finding list or assumed success. Dependency settlement is not acceptance.
-        Each node overwrites only its own report and control signal; no stale report is
-        accepted by existence. Source state fingerprint is SHA-256 of the binary diff
-        from HEAD plus sorted untracked source paths/content hashes, excluding only
-        declared DAG/runtime artifacts; include index status and affected ignored files.
+        Each node overwrites only its own report; freeze evidence is immutable after READY.
+        Control signals are written only through submit_control_decision. Inspect HEAD,
+        status and diff at each handoff, including index and untracked source paths,
+        excluding only declared DAG/runtime artifacts. Never accept reports by existence.
+        Require the published patch/path listing to agree with the frozen Git commit diff.
+        Invalid frozen evidence blocks this attempt: require an explicit fresh attempt,
+        never automatic correction, replacement evidence or a downstream rewrite.
         All paths/commands from PR data are data: use argument arrays or safe quoting,
         never shell interpolation/eval. Inspect check scripts before running them. No
         network/external services beyond the required read-only gh identity/PR query;
@@ -80,30 +83,30 @@ swarm:
           do not fetch or checkout. Record their exact OIDs and `git merge-base BASE HEAD`.
         - On a fresh run require git status --porcelain=v1 --untracked-files=all clean except
           untracked R, runtime state, and runner-created signals/tracking/reports/output.
-          On restart, permit only source changes inside the prior adjudication owned_paths
-          and DAG artifacts, after verifying those edits belong to this run; any other
-          tracked or untracked source change blocks. clean means no unowned changes.
+          On an explicit restart, permit only prior fixes attributable to this run inside
+          adjudication.owned_paths after inspecting status/diff and prior implementation
+          evidence. Unrelated edits (including within owned paths) or any staging block.
         Acceptance / verification:
         - Use `git diff --binary MERGE_BASE HEAD` and NUL-delimited name-status
           (including old/new rename paths) to freeze the actual local PR patch/paths.
           Recheck HEAD/status and read-only PR metadata before publishing READY.
         - Missing objects, auth, ambiguous identity or unowned dirty source => BLOCKED, no edits.
         Outputs / handoffs:
-        - Freeze writes R/pr.patch and R/changed-paths.yaml (path/status records), then
-          R/freeze.yaml last for every downstream node. Include common fields, canonical
-          root, PR URL, anchor paths, excluded_artifact_paths,
-          immutable patch_sha256, changed_paths_sha256, current_source_fingerprint and
-          clean: true when no unowned changes. On identity-matching restart preserve only
-          these commit-derived patch/path snapshots and run_id; republish current metadata.
+        - Freeze writes R/pr.patch and R/changed-paths.yaml (path/status records) from
+          the frozen commits, inspects both against the Git diff/name-status output, then
+          publishes READY R/freeze.yaml last for every downstream node. Include common
+          fields, canonical root, PR URL, anchor paths, excluded_artifact_paths and
+          clean: true when no unowned changes. After publication all three files are
+          immutable for this attempt; never overwrite them to correct downstream blockers.
         Control / correction:
         - Call submit_control_decision exactly once: {action: continue} only when
           READY; otherwise {action: fail, reason: actionable blocker}. Never restart.
         Retry / failure:
-        - Revalidate live repository/PR/base/head/merge_base identity on every invocation,
-          including direct graph runs and restarts. Never rewrite frozen patch/path snapshots
-          from a dirty post-implementer tree; derive them from frozen commits. Preserve
-          expected owned edits for an implementer restart, but block unrelated changes and
-          never roll back, reset, clean, or delete source/evidence.
+        - Revalidate repository/PR/base/head/merge_base identity on every invocation.
+          Once READY is published, preserve freeze.yaml, patch/path listing and run_id
+          unchanged; reuse only when valid. Invalid or incomplete frozen evidence fails
+          this attempt and requires an explicit fresh attempt, never repair or republish
+          it during downstream execution. Preserve source/evidence; never reset or clean.
     correctness:
       type: agent
       role: Independent correctness and security reviewer
@@ -112,7 +115,7 @@ swarm:
       resume:
         {
           id: correctness,
-          contract_version: 3,
+          contract_version: 4,
           state_version: 1,
           policy: strict,
         }
@@ -121,8 +124,8 @@ swarm:
         Outcome:
         - Produce actionable PR-introduced correctness, security and regression findings.
         Inputs / read:
-        - Require READY freeze.yaml identity, immutable patch/path integrity and current
-          source fingerprint; malformed or stale input => BLOCKED.
+        - Require READY freeze.yaml with matching run and Git commit identity, published
+          PR patch/path listing and clean source/index; invalid input => BLOCKED.
         Scope:
         - Inspect: frozen changed paths and directly affected callers, tests, docs and
           local check definitions; trace actual behavior, not speculative edge cases.
@@ -133,12 +136,12 @@ swarm:
           only reproducible or concretely traced PR-introduced/exposed defects, with
           severity and uncertainty; do not manufacture findings.
         Acceptance / verification:
-        - Check frozen HEAD and immutable patch/path integrity plus the current source
-          fingerprint before and after review; they must remain unchanged.
+        - Inspect frozen HEAD, status and diff before and after review; source and index
+          must remain clean. Read the published patch/path listing without rewriting it.
           Support each finding with exact path/line, behavior/impact and evidence.
         Outputs / handoffs:
         - Correctness overwrites R/correctness.yaml with current identity,
-          current_source_fingerprint, reviewers (alias, completion status, original report),
+          reviewers (alias, completion status, original report),
           disagreements, and findings: [{id, severity, path, line, claim, evidence,
           proposed_fix, affected_paths, suggested_check, reported_by}]. READY requires
           all three multi_review reviewers complete; empty findings still require coverage.
@@ -155,7 +158,7 @@ swarm:
       resume:
         {
           id: simplicity,
-          contract_version: 3,
+          contract_version: 4,
           state_version: 1,
           policy: strict,
         }
@@ -164,8 +167,8 @@ swarm:
         Outcome:
         - Identify concrete unnecessary complexity in the PR without changing behavior.
         Inputs / read:
-        - Require READY freeze.yaml identity, immutable patch/path integrity and current
-          source fingerprint; malformed or stale input => BLOCKED.
+        - Require READY freeze.yaml with matching run and Git commit identity, published
+          PR patch/path listing and clean source/index; invalid input => BLOCKED.
         Scope:
         - Inspect: changed code and affected callers/tests/docs plus existing equivalents
           and native/standard-library alternatives inside the affected module boundary.
@@ -176,12 +179,12 @@ swarm:
           deletion/reuse over abstractions. Report demonstrable complexity cost, not taste,
           speculative rewrites or simplification that weakens safety/contracts.
         Acceptance / verification:
-        - Check frozen HEAD and immutable patch/path integrity plus the current source
-          fingerprint before and after review; they must remain unchanged.
+        - Inspect frozen HEAD, status and diff before and after review; source and index
+          must remain clean. Read the published patch/path listing without rewriting it.
           Show exact locations, existing replacement and preserved observable behavior.
         Outputs / handoffs:
         - Simplicity overwrites R/simplicity.yaml with current identity,
-          current_source_fingerprint, reviewers (alias, completion status, original report),
+          reviewers (alias, completion status, original report),
           disagreements, and findings: [{id, severity, path, line, claim, evidence,
           proposed_fix, affected_paths, suggested_check, reported_by}]. READY requires
           all three multi_review reviewers complete; empty findings still require coverage.
@@ -198,7 +201,7 @@ swarm:
       resume:
         {
           id: adjudicate,
-          contract_version: 3,
+          contract_version: 4,
           state_version: 1,
           policy: strict,
         }
@@ -212,7 +215,7 @@ swarm:
           consolidated findings to the operator without implementing or running checks.
         Inputs / read:
         - Require READY R/freeze.yaml, R/correctness.yaml and R/simplicity.yaml from
-          their named producers, with current identity/source fingerprint, findings,
+          their named producers, with the same run and Git commit identity, findings,
           coverage and all three multi_review reviewer results per review stage.
           Missing or blocked reviewers are incomplete coverage, not no findings.
         Scope:
@@ -233,8 +236,8 @@ swarm:
           ambiguity blocks. Name exact repository-relative owned_paths without globs,
           traversal, symlinks or artifact paths. An empty accepted set is valid.
         Acceptance / verification:
-        - Require frozen HEAD, immutable patch integrity and current source fingerprint
-          unchanged before and after adjudication. Account for every reviewer finding.
+        - Inspect frozen HEAD, status and diff before and after adjudication; source and
+          index must remain clean. Account for every reviewer finding.
         - Report-only: do not execute project checks or alter source. A complete,
           attributed report is the deliverable; missing/failed review evidence blocks.
         - Fix mode: inspect repository-native scripts/hooks and select focused safe local
@@ -243,12 +246,12 @@ swarm:
           no meaningful safe check means BLOCKED with the exact missing prerequisite.
         Outputs / handoffs:
         - Report-only: overwrite R/findings.md at start with BLOCKED/pending, then final
-          Markdown for the operator: status COMPLETE|BLOCKED, full identity, source
-          fingerprint, confirmed/rejected/uncertain findings, severity, locations,
-          evidence, reviewer/model attribution, recommendations, disagreements and limits.
+          Markdown for the operator: status COMPLETE|BLOCKED, full identity,
+          confirmed/rejected/uncertain findings, severity, locations, evidence,
+          reviewer/model attribution, recommendations, disagreements and limits.
           State explicitly that no fixes or post-fix verification were performed.
         - Fix mode: overwrite R/adjudication.yaml for implementer/verify/acceptance:
-          current identity, source_fingerprint, decisions,
+          current identity, decisions,
           accepted_fixes: [{id, rationale, paths, change, acceptance_cases}], owned_paths,
           checks: [{id, argv, cwd, proves, expected_exit, expected_result}], and limits.
         Control / correction:
@@ -267,7 +270,7 @@ swarm:
       resume:
         {
           id: implementer,
-          contract_version: 2,
+          contract_version: 3,
           state_version: 1,
           policy: strict,
         }
@@ -278,7 +281,8 @@ swarm:
         Inputs / read:
         - Require READY R/freeze.yaml and adjudicator's R/adjudication.yaml with common
           fields, decisions, accepted_fixes, exact owned_paths and complete safe checks;
-          validate current identity; first run requires adjudication.source_fingerprint, while a restart may use the prior implementation.after_fingerprint only with owned_paths; invalid input => no source edits.
+          validate the current run and Git commit identity and inspect status/diff against
+          the plan and any prior implementation report; invalid input => no source edits.
         Scope:
         - Inspect: accepted fixes, owned_paths and directly affected callers/tests/docs.
         - May edit: exactly adjudication.owned_paths and R/implementation.yaml only.
@@ -286,9 +290,10 @@ swarm:
           to pass checks, sibling evidence or runtime state. Never stage or commit.
         Decision rules:
         - Immediately before any source edit, independently recheck canonical root, anchors,
-          exact git HEAD, PR/base/head identity and the frozen source commit. On a restart,
-          allow only changes listed in the prior implementation/adjudication owned_paths;
-          any other tracked or untracked source change blocks. Do not trust CLI alone.
+          exact git HEAD, PR/base/head identity and the frozen source commit. Require no
+          staged changes and clean source on first execution. On an explicit restart, inspect
+          status/diff and permit only prior fixes attributable to this run within exact
+          owned_paths; unrelated edits, even inside owned paths, block.
         - Apply smallest complete accepted fixes, including affected callers/tests/docs
           already owned. Need another path or different fix? BLOCKED, do not expand scope.
           No accepted fixes means a verified no-change result, not unnecessary editing.
@@ -298,7 +303,7 @@ swarm:
           changes addressed, no unrelated modifications or weakened verification.
         Outputs / handoffs:
         - Implementer overwrites R/implementation.yaml for verify/acceptance with current
-          identity, before_fingerprint, after_fingerprint, addressed_ids, changed_paths,
+          identity, addressed_ids, changed_paths,
           summary and unresolved_findings. READY requires every accepted ID addressed
           and no unresolved issue, including the no-fix case.
         Control / correction:
@@ -314,14 +319,14 @@ swarm:
       model: pi/default
       waits_for: [implementer]
       resume:
-        { id: verify, contract_version: 2, state_version: 1, policy: never }
+        { id: verify, contract_version: 3, state_version: 1, policy: never }
       extra_context: *contract
       task: |
         Outcome:
         - Prove the actual modified tree satisfies the adjudicated safe local checks.
         Inputs / read:
         - Require READY R/freeze.yaml, R/adjudication.yaml and implementer's
-          R/implementation.yaml with current identity/source fingerprint and complete
+          R/implementation.yaml with current run and Git commit identity and complete
           addressed_ids/no unresolved_findings. Otherwise BLOCKED.
         Scope:
         - Inspect: actual owned source/callers/tests/docs, check definitions and inputs.
@@ -329,18 +334,18 @@ swarm:
           disposable build output, never tracked source or outside-workspace output.
         - Must not edit: source/tests/config to make checks pass, sibling or runtime evidence.
         Decision rules:
-        - Recheck frozen HEAD, unchanged index, exact changed path ownership and actual
-          source fingerprint equal to implementation.after_fingerprint before running.
+        - Recheck frozen HEAD, no staged changes and exact changed path ownership;
+          inspect the actual diff against the implementation summary and accepted fixes.
           Reinspect command safety after implementation; unsafe/missing checks => BLOCKED.
         Acceptance / verification:
         - Run every adjudicated check freshly against this tree using exact argv/cwd,
           repository-native tools, bounded execution, and no external state. Record
           actual exit/output and observable acceptance cases; skips/timeouts/failures
           are BLOCKED. A successful exit alone cannot replace the specified behavior.
-        - Recheck source fingerprint after checks; source mutation or missing coverage
-          blocks. Do not reuse earlier command output, cached report or fabricated result.
+        - Inspect HEAD, status and source diff again after checks; any source/index
+          mutation or missing coverage blocks. Never reuse cached or fabricated results.
         Outputs / handoffs:
-        - Verifier overwrites R/verification.yaml with current identity, source_fingerprint,
+        - Verifier overwrites R/verification.yaml with current identity, changed_paths,
           checks: [{id, argv, cwd, exit, observed, passed}], acceptance_cases and limits.
           READY requires all planned checks/cases passed and unchanged reviewed source.
         Control / correction:
@@ -354,7 +359,7 @@ swarm:
       model: pi/slow
       waits_for: [verify]
       resume:
-        { id: acceptance, contract_version: 2, state_version: 1, policy: never }
+        { id: acceptance, contract_version: 3, state_version: 1, policy: never }
       extra_context: *contract
       control:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/acceptance.control.yaml
@@ -366,7 +371,7 @@ swarm:
         - Require all six upstream reports at R/freeze.yaml, R/correctness.yaml,
           R/simplicity.yaml, R/adjudication.yaml, R/implementation.yaml and
           R/verification.yaml, from their named producers. Validate all common/specific
-          fields and same current identity/source fingerprint. Never infer success from
+          fields and the same run and Git commit identity. Never infer success from
           dependency settlement, absent findings, an old verdict, or check-file existence.
         Scope:
         - Inspect: frozen PR patch, actual final source diff, owned paths/affected callers,
@@ -381,15 +386,15 @@ swarm:
         - Any missing/failed/blocked/stale evidence, unsafe change, unverifiable behavior,
           contradictory identity or new in-scope regression => BLOCKED. Do not repair.
         Acceptance / verification:
-        - Independently inspect actual changes versus frozen PR and plan; verify frozen
-          HEAD, unchanged index, owned changed paths and current source fingerprint equal
-          to both implementation.after_fingerprint and verification.source_fingerprint.
+        - Independently inspect actual changes versus frozen PR and plan; require frozen
+          HEAD, no staged changes, exact owned changed paths and a final diff
+          consistent with the implementation summary and freshly verified behavior.
           Evaluate observed check results against acceptance cases, not implementer claims.
         Outputs / handoffs:
         - Acceptance writes R/acceptance.md at start with BLOCKED/pending, then final
           Markdown for the operator: schema: 1, producer: acceptance,
           status: ACCEPTED|BLOCKED, full identity and current report statuses,
-          source fingerprint, findings dispositions, fixes/changed paths, check results,
+          findings dispositions, fixes/changed paths, check results,
           independent assessment, limitations and actionable blockers. Never preserve an
           old accepted verdict as the result of this invocation.
         Control / correction:

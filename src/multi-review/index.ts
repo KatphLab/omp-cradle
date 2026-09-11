@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent'
 import { TaskTool } from '@oh-my-pi/pi-coding-agent/task'
 import { createSubagentSettings } from '@oh-my-pi/pi-coding-agent/task/executor'
+import { randomUUID } from 'node:crypto'
 
 const reviewers = ['reviewer-smol', 'reviewer-default', 'reviewer-slow']
 const synthesisInstructions =
@@ -58,7 +59,7 @@ export function registerMultiReview(pi: ExtensionAPI): void {
               .filter(Boolean)
               .join('\n\n'),
             tasks: reviewers.map((agent) => ({
-              name: agent,
+              name: `${randomUUID()}-${agent}`,
               agent,
               task: assignment,
             })),
