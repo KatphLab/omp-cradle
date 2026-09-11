@@ -98,6 +98,8 @@ Use a positive PR number. `--validate` checks the selected mode's graph locally 
 
 Complementary correctness and simplicity reviews each call `multi_review` once for subreviews from the `pi/smol`, `pi/default`, and `pi/slow` model role aliases; adjudication consolidates their findings. Model diversity requires those aliases to resolve to different models. By default, adjudication feeds one implementer, verification, and independent acceptance. There are no automatic correction loops. Fixes remain as uncommitted local changes; the workflow does not post comments, commit, merge, or push.
 
+Stage models are explicit: `freeze` uses `pi/smol` for procedural identity checks; `correctness`, `simplicity`, `implementer`, and `verify` use `pi/default` for review coordination, bounded fixes, and check interpretation; `adjudicate` and `acceptance` use `pi/slow` for cross-review reasoning and independent final judgment. These aliases use your configured OMP model roles.
+
 `--report-only` ends at adjudication, skipping implementation, verification, and acceptance without source edits. It writes `.omp-swarm/review-pr-195/run/findings.md` with consolidated evidence, severity, reviewer disagreements, and recommendations. Findings are not auto-fixed, and the report is not merge acceptance.
 
 Both modes use the same generated graph path, `.omp-swarm/review-pr-195/workflow.yaml`, so they cannot coexist there: a fresh invocation refuses an existing graph rather than overwriting it. The default mode's final report remains `.omp-swarm/review-pr-195/run/acceptance.md`. After inspecting the findings, restart the generated graph at the appropriate stage:
