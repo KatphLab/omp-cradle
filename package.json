@@ -45,6 +45,7 @@
   },
   "omp": {
     "extensions": [
+      "./src/i-have-adhd/index.ts",
       "./src/commit-command/index.ts",
       "./src/council/index.ts",
       "./src/swarm/index.ts",

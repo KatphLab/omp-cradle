@@ -27,18 +27,21 @@ async function commandOutput(argv: string[], cwd: string): Promise<string> {
 }
 
 export async function preparePrReview(arguments_: string[]): Promise<PrReview> {
-  const [number, option] = arguments_
+  const [number, ...options] = arguments_
   if (
     number === undefined ||
     !/^[1-9]\d*$/.test(number) ||
     !Number.isSafeInteger(Number(number)) ||
-    arguments_.length > 2 ||
-    (option !== undefined && option !== '--validate')
+    new Set(options).size !== options.length ||
+    options.some(
+      (option) => option !== '--validate' && option !== '--report-only',
+    )
   ) {
     throw new Error(
-      'Usage: omp-swarm review-pr <positive-safe-integer> [--validate]',
+      'Usage: omp-swarm review-pr <positive-safe-integer> [--validate] [--report-only]',
     )
   }
+  const reportOnly = options.includes('--report-only')
   const workspaceOutput = await commandOutput(
     ['git', 'rev-parse', '--show-toplevel'],
     process.cwd(),
@@ -54,11 +57,13 @@ export async function preparePrReview(arguments_: string[]): Promise<PrReview> {
     new URL('workflows/review-pr.yaml', import.meta.url),
     'utf8',
   )
-  const content = template
+  let content = template
     .replaceAll('__PR_NUMBER__', number)
+    .replaceAll('__REVIEW_MODE__', reportOnly ? 'report-only' : 'fix')
     .replace(/^ {2}workspace: \.$/m, () =>
       ['  workspace: ', JSON.stringify(workspace)].join(''),
     )
+  if (reportOnly) content = reportOnlyYaml(content)
   const definition = parseSwarmYaml(content)
   definition.sourcePath = resolvedPath
   definition.sourceDir = path.dirname(resolvedPath)
@@ -67,12 +72,37 @@ export async function preparePrReview(arguments_: string[]): Promise<PrReview> {
   }
   return {
     number,
-    validate: option === '--validate',
+    validate: options.includes('--validate'),
     workspace,
     resolvedPath,
     content,
     definition,
   }
+}
+
+function isReviewYamlMapping(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function reportOnlyYaml(content: string): string {
+  const document = Bun.YAML.parse(content)
+  if (
+    !isReviewYamlMapping(document) ||
+    !isReviewYamlMapping(document['swarm']) ||
+    !isReviewYamlMapping(document['swarm']['nodes']) ||
+    !isReviewYamlMapping(document['swarm']['nodes']['adjudicate']) ||
+    !isReviewYamlMapping(document['swarm']['nodes']['adjudicate']['resume'])
+  ) {
+    throw new Error(
+      'Packaged PR review expected YAML mappings and adjudicate resume',
+    )
+  }
+  const nodes = document['swarm']['nodes']
+  document['swarm']['nodes']['adjudicate']['resume']['policy'] = 'never'
+  delete nodes['implementer']
+  delete nodes['verify']
+  delete nodes['acceptance']
+  return Bun.YAML.stringify(document, undefined, 2)
 }
 
 export async function verifyPrReview(review: PrReview): Promise<void> {

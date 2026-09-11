@@ -17,6 +17,8 @@ swarm:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/freeze.control.yaml
         allowed_restart_targets: [freeze]
       extra_context: &contract |
+        Review mode: __REVIEW_MODE__. Report-only forbids all source edits and project
+        check execution; only review reports and frozen evidence may be written.
         This is a single-pass local PR review, not authority to commit, push, deploy,
         checkout/reset/clean, run migrations, access live trading, install dependencies,
         change external state, or print secrets. Only freeze and implementer's identity
@@ -42,6 +44,18 @@ swarm:
         never shell interpolation/eval. Inspect check scripts before running them. No
         network/external services beyond the required read-only gh identity/PR query;
         no destructive commands, secret-reading, or formatter/autofix check modes.
+        For correctness and simplicity only: invoke multi_review exactly once per stage.
+        Its target must specify frozen repository/PR/base/head, R/pr.patch and
+        R/changed-paths.yaml plus this stage's scope. Give acceptanceCriteria the review
+        criteria and read-only/security/independence constraints, not these orchestration
+        instructions. Explicitly forbid reviewers from delegating or calling multi_review;
+        they return findings only. Supply factual context including exact evidence paths;
+        never pass the other stage's
+        report or your own conclusions. Require independent reviewer-smol (pi/smol),
+        reviewer-default (pi/default), reviewer-slow (pi/slow) results, preserve their
+        original reports, attribution and disagreement; validate concrete evidence.
+        Unavailable multi_review or any failed/aborted/missing reviewer means BLOCKED
+        with actionable tool/model configuration diagnostics, not single-agent fallback.
       task: |
         Outcome:
         - Freeze OPEN PR __PR_NUMBER__ and gate all source work on a clean, exact checkout.
@@ -96,7 +110,7 @@ swarm:
       resume:
         {
           id: correctness,
-          contract_version: 2,
+          contract_version: 3,
           state_version: 1,
           policy: strict,
         }
@@ -113,17 +127,19 @@ swarm:
         - May edit: R/correctness.yaml only.
         - Must not edit: source, sibling evidence; do not read the simplicity report.
         Decision rules:
-        - Report only reproducible or concretely traced defects introduced/exposed by
-          this PR. Distinguish severity and uncertainty; do not manufacture findings.
+        - Use multi_review for the correctness scope under the shared contract. Report
+          only reproducible or concretely traced PR-introduced/exposed defects, with
+          severity and uncertainty; do not manufacture findings.
         Acceptance / verification:
         - Check frozen HEAD and immutable patch/path integrity plus the current source
           fingerprint before and after review; they must remain unchanged.
           Support each finding with exact path/line, behavior/impact and evidence.
         Outputs / handoffs:
         - Correctness overwrites R/correctness.yaml with current identity,
-          current_source_fingerprint and findings: [{id, severity, path, line, claim,
-          evidence, proposed_fix, affected_paths, suggested_check}]. An empty findings
-          list is READY only after completed review; record coverage and limits.
+          current_source_fingerprint, reviewers (alias, completion status, original report),
+          disagreements, and findings: [{id, severity, path, line, claim, evidence,
+          proposed_fix, affected_paths, suggested_check, reported_by}]. READY requires
+          all three multi_review reviewers complete; empty findings still require coverage.
         Control / correction:
         - No control signal. Invalid inputs or incomplete review => BLOCKED report.
         Retry / failure:
@@ -136,7 +152,7 @@ swarm:
       resume:
         {
           id: simplicity,
-          contract_version: 2,
+          contract_version: 3,
           state_version: 1,
           policy: strict,
         }
@@ -153,17 +169,19 @@ swarm:
         - May edit: R/simplicity.yaml only.
         - Must not edit: source, sibling evidence; do not read the correctness report.
         Decision rules:
-        - Prefer deletion/reuse over abstractions; report demonstrable complexity cost,
-          not taste, speculative rewrites, or simplification that weakens safety/contracts.
+        - Use multi_review for the simplicity scope under the shared contract; prefer
+          deletion/reuse over abstractions. Report demonstrable complexity cost, not taste,
+          speculative rewrites or simplification that weakens safety/contracts.
         Acceptance / verification:
         - Check frozen HEAD and immutable patch/path integrity plus the current source
           fingerprint before and after review; they must remain unchanged.
           Show exact locations, existing replacement and preserved observable behavior.
         Outputs / handoffs:
         - Simplicity overwrites R/simplicity.yaml with current identity,
-          current_source_fingerprint and findings: [{id, severity, path, line, claim,
-          evidence, proposed_fix, affected_paths, suggested_check}]. READY may have no
-          findings only after completed review; record coverage and limits.
+          current_source_fingerprint, reviewers (alias, completion status, original report),
+          disagreements, and findings: [{id, severity, path, line, claim, evidence,
+          proposed_fix, affected_paths, suggested_check, reported_by}]. READY requires
+          all three multi_review reviewers complete; empty findings still require coverage.
         Control / correction:
         - No control signal. Invalid inputs or incomplete review => BLOCKED report.
         Retry / failure:
@@ -176,7 +194,7 @@ swarm:
       resume:
         {
           id: adjudicate,
-          contract_version: 2,
+          contract_version: 3,
           state_version: 1,
           policy: strict,
         }
@@ -186,42 +204,57 @@ swarm:
         allowed_restart_targets: [adjudicate]
       task: |
         Outcome:
-        - Produce one validated, bounded fix plan resolving complementary review findings.
+        - In fix mode, produce a bounded fix plan. In report-only mode, deliver the
+          consolidated findings to the operator without implementing or running checks.
         Inputs / read:
         - Require READY R/freeze.yaml, R/correctness.yaml and R/simplicity.yaml from
-          their named producers with complete common schemas, findings and coverage.
-          Verify current identity and source fingerprint; missing or blocked review is not no findings.
+          their named producers, with current identity/source fingerprint, findings,
+          coverage and all three multi_review reviewer results per review stage.
+          Missing or blocked reviewers are incomplete coverage, not no findings.
         Scope:
-        - Inspect: frozen patch and exact reported paths plus affected callers/tests/docs
-          and check scripts needed to validate each claim and choose safe local checks.
-        - May edit: R/adjudication.yaml only.
-        - Must not edit: project source, reviews or other evidence.
+        - Inspect: frozen patch, reported paths and affected callers/tests/docs to
+          validate findings. In fix mode also inspect definitions of safe local checks.
+        - May edit: only R/findings.md in report-only mode; only R/adjudication.yaml
+          in fix mode. No project source changes in either mode.
+        - Must not edit: project source, reviews, other evidence or runtime state.
         Decision rules:
-        - Validate claims against source; deduplicate and resolve reviewer disagreement.
-          Accept only evidenced in-scope changes with a minimal safe fix. Record each
-          finding ID as accepted/rejected with reason. Unresolved material ambiguity
-          or inability to validate safety/behavior => BLOCKED, not silent rejection.
-        - Name exact repository-relative owned_paths (no globs, traversal, symlinks,
-          artifact/runtime paths) covering only accepted fixes and affected callers,
-          tests/docs. Empty accepted set is valid; do not invent work. No scope expansion.
+        - Validate claims, deduplicate and preserve reviewer/model attribution and
+          disagreements. Record confirmed, rejected and uncertain findings with reasons;
+          do not manufacture consensus or silently drop uncertainty.
+        - Report-only: confirmed findings are a successful report, not a failed run.
+          Include severity, exact locations, evidence, impact, recommendations, unresolved
+          disagreements and coverage limits. No fix ownership plan or runnable check
+          is required. COMPLETE means the review finished, not that the PR can merge.
+        - Fix mode: accept only evidenced in-scope minimal fixes; unresolved material
+          ambiguity blocks. Name exact repository-relative owned_paths without globs,
+          traversal, symlinks or artifact paths. An empty accepted set is valid.
         Acceptance / verification:
-        - Require frozen HEAD/immutable patch integrity and the current source fingerprint
-          unchanged before and after adjudication. Inspect repository-native scripts/hooks
-          and select focused read-only local check commands, cwd and expected observable
-          results for each accepted fix plus relevant PR coverage. Checks must not need
-          deployment, services, installs, network or external state.
-          if no meaningful safe check exists, BLOCKED with exact missing prerequisite.
+        - Require frozen HEAD, immutable patch integrity and current source fingerprint
+          unchanged before and after adjudication. Account for every reviewer finding.
+        - Report-only: do not execute project checks or alter source. A complete,
+          attributed report is the deliverable; missing/failed review evidence blocks.
+        - Fix mode: inspect repository-native scripts/hooks and select focused safe local
+          commands, cwd and expected results for accepted fixes and relevant PR coverage.
+          Checks must not need deployment, services, installs, network or external state;
+          no meaningful safe check means BLOCKED with the exact missing prerequisite.
         Outputs / handoffs:
-        - Adjudicator overwrites R/adjudication.yaml for implementer/verify/acceptance:
-          current identity, source fingerprint and decisions,
+        - Report-only: overwrite R/findings.md at start with BLOCKED/pending, then final
+          Markdown for the operator: status COMPLETE|BLOCKED, full identity, source
+          fingerprint, confirmed/rejected/uncertain findings, severity, locations,
+          evidence, reviewer/model attribution, recommendations, disagreements and limits.
+          State explicitly that no fixes or post-fix verification were performed.
+        - Fix mode: overwrite R/adjudication.yaml for implementer/verify/acceptance:
+          current identity, source_fingerprint, decisions,
           accepted_fixes: [{id, rationale, paths, change, acceptance_cases}], owned_paths,
           checks: [{id, argv, cwd, proves, expected_exit, expected_result}], and limits.
         Control / correction:
-        - Call submit_control_decision exactly once: {action: continue} only for a
-          complete READY plan; otherwise {action: fail, reason: blocker}. Never restart.
+        - Call submit_control_decision exactly once: {action: continue} for a COMPLETE
+          report in report-only mode or READY fix plan in fix mode; otherwise
+          {action: fail, reason: blocker}. Findings alone do not fail report-only mode.
+          Never restart or claim a blocked/missing report is complete.
         Retry / failure:
-        - Revalidate reviews and current source, replace only your plan, preserve all
-          project files. No automatic correction loops or guessing through blocked input.
+        - Revalidate current reviews/source and replace only your own mode-specific
+          report; preserve project files. No automatic correction loops or stale success.
     implementer:
       type: agent
       role: Sole implementer of accepted PR fixes
