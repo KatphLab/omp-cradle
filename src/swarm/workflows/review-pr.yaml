@@ -90,6 +90,12 @@ swarm:
         network/external services beyond the required read-only gh identity/PR query;
         no destructive commands, secret-reading, or formatter/autofix check modes.
         For correctness and simplicity only: invoke multi_review exactly once per stage.
+        Run it in a dedicated functions.eval call with language: js and timeout: 0
+        (not null or omitted), using await tool.multi_review(...) and displaying the
+        complete returned result. This disables the outer eval deadline: multi_review
+        waits synchronously for all three reviewers and can take several minutes.
+        Do not combine this call with prerequisite checks or report writing. Wait for
+        its result before validating reviewer evidence and writing the stage report.
         Its target must specify frozen repository/PR/base/head, R/pr.patch and
         R/changed-paths.yaml plus this stage's scope. Give acceptanceCriteria the review
         criteria and read-only/security/independence constraints, not these orchestration
