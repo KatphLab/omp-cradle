@@ -54,7 +54,7 @@ omp --extension .
 
 Use `/i-have-adhd [on|off|stop]` to toggle ADHD-friendly output for the current session. It is off by default; pass `--adhd` when starting OMP to enable it. The mode persists across session branches and is restored after compaction. Saying "stop adhd mode" or "normal mode" disables it.
 
-Use `/tool-severity off` to suppress severity confirmation prompts for the current session. Use `/tool-severity on` to restore them; prompts reset to enabled when switching sessions.
+Use `/tool-severity off` to suppress severity confirmation prompts for the current session. Native approval policies remain active. Use `/tool-severity on` to restore severity prompts; they reset to enabled when switching or branching sessions.
 
 `/multi-review` and the agent-callable `multi_review` tool only provide model diversity when the `pi/smol`, `pi/default`, and `pi/slow` roles resolve to different models. Configure those roles in `/model` → **Roles**.
 
@@ -102,6 +102,8 @@ Both review stages await `multi_review` in a dedicated `functions.eval` call wit
 
 Each `multi_review` invocation uses unique runtime reviewer IDs while preserving reviewer/model attribution, so concurrent stages do not share reviewer sessions. Every agent reads back and validates its written report before completing, including nested `identity.run_id` and node-specific evidence. Freeze binds the review to Git commit identity and validates its patch/path listing and manifest before signaling success; it may correct its own drafts before that signal. Stages inspect Git status/diffs and owned paths rather than custom checksums or source fingerprints. Published freeze evidence is not corrected while reviews are running: invalid evidence blocks and requires an explicitly authorized fresh attempt.
 
+Fix-mode check plans must keep disposable fixtures and cleanup inside the repository. Containment tests use sibling simulated-workspace and outside-target directories under one uniquely created local fixture root; only that root may be recursively removed. Adjudication checks this before publishing the plan, and verification independently rechecks it.
+
 Stage models are explicit: `freeze` uses `pi/smol` for procedural identity checks; `correctness`, `simplicity`, `implementer`, and `verify` use `pi/default` for review coordination, bounded fixes, and check interpretation; `adjudicate` and `acceptance` use `pi/slow` for cross-review reasoning and independent final judgment. These aliases use your configured OMP model roles.
 
 `--report-only` ends at adjudication, skipping implementation, verification, and acceptance without source edits. It writes `.omp-swarm/review-pr-195/run/findings.md` with consolidated evidence, severity, reviewer disagreements, and recommendations. Findings are not auto-fixed, and the report is not merge acceptance.
@@ -125,15 +127,15 @@ bun check  # format, lint, typecheck, architecture, dead-code, and duplication c
 Run the system-prompt behavior evaluation with:
 
 ```bash
-make eval-system-prompt
+bun src/system-prompt/eval/index.ts
 ```
 
 For a quick single-scenario run:
 
 ```bash
-RUNS=1 SCENARIO=existing-code-reuse make eval-system-prompt
+OMP_EVAL_RUNS=1 OMP_EVAL_SCENARIO=existing-code-reuse bun src/system-prompt/eval/index.ts
 ```
 
-The evaluation writes `report/system-prompt-eval.json`.
+Optionally set `OMP_EVAL_MODEL` and `OMP_EVAL_THINKING` to select the model and thinking level. The evaluation writes `report/system-prompt-eval.json`.
 
 See [`AGENTS.md`](./AGENTS.md) for repository contribution rules.
