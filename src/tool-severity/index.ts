@@ -105,7 +105,7 @@ function registerEditSeverityHandlers(
         reason:
           'Blocked by user: this file deletion was previously rejected and cannot be retried',
       }
-    } else {
+    } else if (state.promptsEnabled) {
       state.pending.set(event.toolCallId, deletion.rejectionKey)
       state.targetsByKey.set(
         deletion.rejectionKey,
@@ -170,11 +170,8 @@ function registerEditSeverityTool(
     parameters: nativeEdit.parameters,
     approval(input): ToolApprovalDecision {
       const deletion = getEditDeletion(input)
-      if (deletion === undefined) {
+      if (deletion === undefined || !state.promptsEnabled) {
         return { tier: nativeEdit.approval(input) }
-      }
-      if (!state.promptsEnabled) {
-        return { tier: 'write', policy: 'allow', override: true }
       }
       const severity = deletion.deletionCount === 1 ? 'high' : 'critical'
       return {
@@ -213,10 +210,7 @@ function registerBashSeverityTool(
       command: pi.zod.string().describe('The shell command to execute'),
       severity: pi.zod.enum(SEVERITIES).describe('Command severity'),
     }),
-    approval: () =>
-      state.promptsEnabled
-        ? 'exec'
-        : { tier: 'exec', policy: 'allow', override: true },
+    approval: () => 'exec',
     async execute(
       _toolCallId,
       parameters: { command: string; severity: BashSeverity },
@@ -301,6 +295,9 @@ export default function toolSeverityExtension(pi: ExtensionAPI): void {
     },
   })
   pi.on('session_switch', () => {
+    state.promptsEnabled = true
+  })
+  pi.on('session_branch', () => {
     state.promptsEnabled = true
   })
 
