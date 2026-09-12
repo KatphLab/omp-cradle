@@ -158,6 +158,35 @@ function isPullRequest(
 }
 
 export async function persistPrReview(review: PrReview): Promise<void> {
+  const workspace = await fs.realpath(review.workspace)
+  const relativePath = path.relative(workspace, review.resolvedPath)
+  if (
+    workspace !== review.workspace ||
+    !/^\.omp-swarm\/review-pr-[1-9]\d*\/workflow\.yaml$/.test(relativePath)
+  ) {
+    throw new Error('Review workflow must be inside the canonical workspace')
+  }
+  let directory = workspace
+  for (const component of path.dirname(relativePath).split(path.sep)) {
+    directory = path.join(directory, component)
+    try {
+      const stat = await fs.lstat(directory)
+      if (!stat.isDirectory()) {
+        throw new Error('Review workflow ancestors must be real directories')
+      }
+    } catch (error_) {
+      if (
+        error_ instanceof Error &&
+        'code' in error_ &&
+        error_.code === 'ENOENT'
+      ) {
+        break
+      }
+      throw new Error('Cannot inspect review workflow ancestors', {
+        cause: error_,
+      })
+    }
+  }
   await fs.mkdir(path.dirname(review.resolvedPath), { recursive: true })
   await fs.writeFile(review.resolvedPath, review.content, { flag: 'wx' })
 }
