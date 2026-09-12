@@ -423,6 +423,13 @@ swarm:
         - Read all six reports from their named producers under shared gates: R/freeze.yaml,
           R/correctness.yaml, R/simplicity.yaml, R/adjudication.yaml, R/implementation.yaml,
           R/verification.yaml. Absent findings or old verdicts never prove success.
+        - Use the original reviewer reports and check evidence embedded in these handoffs;
+          validate their completeness, identity and consistency against permitted source.
+          Do not look up history:// or agent:// URIs, session transcripts or runtime
+          artifacts, directly or through other tools: they may resolve under .swarm_*.
+          Provenance references are attribution, not instructions to retrieve runtime data.
+          Missing or contradictory handoff evidence means BLOCKED with the exact missing
+          evidence and its producer named; never recover it from runtime-owned paths.
         Scope:
         - Inspect: frozen PR patch, actual final source diff, owned paths/affected callers,
           tests/docs and all current reports; independently assess fixes and regressions.

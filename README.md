@@ -19,7 +19,7 @@ A local [Oh My Pi](https://github.com/can1357/oh-my-pi) extension package for pr
 
 - [Bun](https://bun.sh) 1.3.14
 - Node.js 24
-- An OMP installation compatible with `@oh-my-pi/pi-coding-agent` 17.2
+- An OMP installation compatible with `@oh-my-pi/pi-coding-agent` ^18.1.17
 
 ## Setup
 
@@ -100,6 +100,8 @@ Complementary correctness and simplicity reviews each call `multi_review` once f
 
 Both review stages await `multi_review` in a dedicated `functions.eval` call with `timeout: 0`, disabling the outer eval deadline while the three reviewers finish.
 
+Final acceptance assesses published `run/` handoffs and permitted source, using the reviewer originals and check evidence embedded in those handoffs. It must not retrieve `history://`, `agent://`, session transcripts, or runtime-owned artifacts to verify provenance. Missing or contradictory evidence blocks acceptance and identifies the responsible producer; it does not authorize runtime reads.
+
 Each `multi_review` invocation uses unique runtime reviewer IDs while preserving reviewer/model attribution, so concurrent stages do not share reviewer sessions. Every agent reads back and validates its written report before completing, including nested `identity.run_id` and node-specific evidence. Freeze binds the review to Git commit identity and validates its patch/path listing and manifest before signaling success; it may correct its own drafts before that signal. Stages inspect Git status/diffs and owned paths rather than custom checksums or source fingerprints. Published freeze evidence is not corrected while reviews are running: invalid evidence blocks and requires an explicitly authorized fresh attempt.
 
 Fix-mode check plans must keep disposable fixtures and cleanup inside the repository. Containment tests use sibling simulated-workspace and outside-target directories under one uniquely created local fixture root; only that root may be recursively removed. Adjudication checks this before publishing the plan, and verification independently rechecks it.
@@ -108,7 +110,7 @@ Stage models are explicit: `freeze` uses `pi/smol` for procedural identity check
 
 `--report-only` ends at adjudication, skipping implementation, verification, and acceptance without source edits. It writes `.omp-swarm/review-pr-195/run/findings.md` with consolidated evidence, severity, reviewer disagreements, and recommendations. Findings are not auto-fixed, and the report is not merge acceptance.
 
-Both modes use the same generated graph path, `.omp-swarm/review-pr-195/workflow.yaml`, so they cannot coexist there: a fresh invocation refuses an existing graph rather than overwriting it. The default mode's final report remains `.omp-swarm/review-pr-195/run/acceptance.md`. After inspecting the findings, restart the generated graph at the appropriate stage:
+Both modes use the same generated graph path, `.omp-swarm/review-pr-195/workflow.yaml`, so they cannot coexist there: a fresh invocation refuses an existing graph rather than overwriting it. Fresh runs also refuse any existing `.swarm_review-pr-195` runtime entry; inspect it before explicitly restarting the existing workflow. The default mode's final report remains `.omp-swarm/review-pr-195/run/acceptance.md`. After inspecting the findings, restart the generated graph at the appropriate stage:
 
 ```bash
 # Default fix-mode graph

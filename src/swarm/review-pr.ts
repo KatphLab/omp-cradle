@@ -46,7 +46,7 @@ export async function preparePrReview(arguments_: string[]): Promise<PrReview> {
     ['git', 'rev-parse', '--show-toplevel'],
     process.cwd(),
   )
-  const workspace = workspaceOutput.replace(/\r?\n$/, '')
+  const workspace = await fs.realpath(workspaceOutput.replace(/\r?\n$/, ''))
   const resolvedPath = path.join(
     workspace,
     '.omp-swarm',
@@ -106,6 +106,25 @@ function reportOnlyYaml(content: string): string {
 }
 
 export async function verifyPrReview(review: PrReview): Promise<void> {
+  const runtime = await fs
+    .lstat(path.join(review.workspace, `.swarm_review-pr-${review.number}`))
+    .catch((error_: unknown) => {
+      if (
+        error_ instanceof Error &&
+        'code' in error_ &&
+        error_.code === 'ENOENT'
+      ) {
+        return
+      }
+      throw new Error('Cannot inspect PR review runtime artifacts', {
+        cause: error_,
+      })
+    })
+  if (runtime !== undefined) {
+    throw new Error(
+      'PR review runtime artifacts already exist; inspect them before explicitly restarting the existing review workflow',
+    )
+  }
   if (await Bun.file(review.resolvedPath).exists()) {
     throw new Error(
       `Review workflow already exists; use omp-swarm restart ${JSON.stringify(review.resolvedPath)}`,
@@ -162,7 +181,8 @@ export async function persistPrReview(review: PrReview): Promise<void> {
   const relativePath = path.relative(workspace, review.resolvedPath)
   if (
     workspace !== review.workspace ||
-    !/^\.omp-swarm\/review-pr-[1-9]\d*\/workflow\.yaml$/.test(relativePath)
+    relativePath !==
+      path.join('.omp-swarm', `review-pr-${review.number}`, 'workflow.yaml')
   ) {
     throw new Error('Review workflow must be inside the canonical workspace')
   }
