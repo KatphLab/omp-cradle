@@ -74,10 +74,10 @@ export default async function indexHaveAdhdExtension(
     )
   }
 
-  const restoreState = (ctx: ExtensionContext): void => {
+  const restoreState = (ctx: ExtensionContext, sync = true): void => {
     enabled = savedState(ctx) ?? pi.getFlag('adhd') === true
     updateStatus(ctx)
-    syncContext(ctx)
+    if (sync) syncContext(ctx)
   }
 
   const setEnabled = (nextEnabled: boolean, ctx: ExtensionContext): void => {
@@ -133,7 +133,7 @@ function registerEvents(
   pi: ExtensionAPI,
   isEnabled: () => boolean,
   setEnabled: (enabled: boolean, ctx: ExtensionContext) => void,
-  restoreState: (ctx: ExtensionContext) => void,
+  restoreState: (ctx: ExtensionContext, sync?: boolean) => void,
   syncContext: (ctx: ExtensionContext) => void,
 ): void {
   pi.on('input', (event, ctx) => {
@@ -154,6 +154,13 @@ function registerEvents(
   })
   pi.on('session_switch', (_event, ctx) => {
     restoreState(ctx)
+  })
+  pi.on('session_branch', (_event, ctx) => {
+    // The host replaces conversation messages after this event.
+    restoreState(ctx, false)
+  })
+  pi.on('before_agent_start', (_event, ctx) => {
+    syncContext(ctx)
   })
   pi.on('session_tree', (_event, ctx) => {
     restoreState(ctx)
