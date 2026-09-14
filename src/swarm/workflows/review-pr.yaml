@@ -212,7 +212,7 @@ swarm:
     correctness:
       type: agent
       role: Independent correctness and security reviewer
-      model: pi/default
+      model: pi/smol
       waits_for: [freeze]
       resume:
         {
@@ -250,7 +250,7 @@ swarm:
     simplicity:
       type: agent
       role: Independent simplicity and maintainability reviewer
-      model: pi/default
+      model: pi/smol
       waits_for: [freeze]
       resume:
         {
@@ -288,7 +288,7 @@ swarm:
     adjudicate:
       type: agent
       role: Evidence-based PR finding adjudicator
-      model: pi/slow
+      model: pi/smol
       waits_for: [correctness, simplicity]
       resume:
         {
@@ -383,7 +383,7 @@ swarm:
     implementer:
       type: agent
       role: Sole implementer of accepted PR fixes
-      model: pi/default
+      model: pi/smol
       waits_for: [adjudicate]
       resume:
         {
@@ -440,7 +440,7 @@ swarm:
     verify:
       type: agent
       role: Independent local verification executor
-      model: pi/default
+      model: pi/smol
       waits_for: [implementer]
       resume:
         { id: verify, contract_version: 6, state_version: 1, policy: never }
@@ -484,7 +484,7 @@ swarm:
     acceptance:
       type: agent
       role: Independent final PR acceptance controller
-      model: pi/slow
+      model: pi/smol
       waits_for: [verify]
       resume:
         { id: acceptance, contract_version: 6, state_version: 1, policy: never }
