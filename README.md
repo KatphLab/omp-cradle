@@ -104,19 +104,25 @@ Final acceptance assesses published `run/` handoffs and permitted source, using 
 
 Each `multi_review` invocation uses unique runtime reviewer IDs while preserving reviewer/model attribution, so concurrent stages do not share reviewer sessions. Every agent reads back and validates its written report before completing, including nested `identity.run_id` and node-specific evidence. Freeze binds the review to Git commit identity and validates its patch/path listing and manifest before signaling success; it may correct its own drafts before that signal. Stages inspect Git status/diffs and owned paths rather than custom checksums or source fingerprints. Published freeze evidence is not corrected while reviews are running: invalid evidence blocks and requires an explicitly authorized fresh attempt.
 
-Fix-mode check plans must keep disposable fixtures and cleanup inside the repository. Containment tests use sibling simulated-workspace and outside-target directories under one uniquely created local fixture root; only that root may be recursively removed. Adjudication checks this before publishing the plan, and verification independently rechecks it.
+Fix-mode plans execute inspected fixture/setup prerequisites before publication and map every material requirement, including security negative cases, to checks. Setup failure blocks publication; an expected pre-fix behavioral failure does not. Disposable fixtures and cleanup stay inside a unique repository-local root. A fixture may initialize its own Git repository and index using sanitized child Git configuration/environment and asserted repository ownership, but may never borrow or mutate the project index, commit, run hooks, or use the network. Verification independently reruns the exact published commands against a READY implementation.
 
 Stage models are explicit: `freeze` uses `pi/smol` for procedural identity checks; `correctness`, `simplicity`, `implementer`, and `verify` use `pi/default` for review coordination, bounded fixes, and check interpretation; `adjudicate` and `acceptance` use `pi/slow` for cross-review reasoning and independent final judgment. These aliases use your configured OMP model roles.
 
 `--report-only` ends at adjudication, skipping implementation, verification, and acceptance without source edits. It writes `.omp-swarm/review-pr-195/run/findings.md` with consolidated evidence, severity, reviewer disagreements, and recommendations. Findings are not auto-fixed, and the report is not merge acceptance.
 
-Both modes use the same generated graph path, `.omp-swarm/review-pr-195/workflow.yaml`, so they cannot coexist there: a fresh invocation refuses an existing graph rather than overwriting it. Fresh runs also refuse any existing `.swarm_review-pr-195` runtime entry; inspect it before explicitly restarting the existing workflow. The default mode's final report remains `.omp-swarm/review-pr-195/run/acceptance.md`. After inspecting the findings, restart the generated graph at the appropriate stage:
+Both modes use the same generated graph path, `.omp-swarm/review-pr-195/workflow.yaml`, so they cannot coexist there: fresh invocation refuses an existing graph or runtime entry rather than overwriting it. The default mode's final report remains `.omp-swarm/review-pr-195/run/acceptance.md`. Signal-path checks do not yet provide a complete tracked-file and symlink safety guarantee across every runtime write/cleanup path; workflow restrictions are not a runtime sandbox.
+
+For an unchanged safe plan, an operator may restart fix mode at `implementer`; it rechecks remote PR identity even for a no-change result. To repair the plan or its check prerequisites while retaining partial fixes, first explicitly authorize same-identity replanning in the generated `adjudicate` task, naming the exact frozen `run_id` and `head`. No authorization is present by default. The entire unstaged delta must match prior recorded source evidence within prior ownership; unrelated edits, staging or unevidenced untracked bytes block recovery. Adjudicate alone archives existing plan/implementation/verification/acceptance reports under a unique `run/recovery-<uuid>/` before replacement and links the archive and retained delta in the successor plan; frozen PR and review evidence stay unchanged.
+
+`--from` selects a restart suffix, not guaranteed upstream reuse: strict definition/version drift or other resume invalidation may rerun upstream stages. Those stages preserve frozen identity and review evidence during authorized recovery; they cannot freeze a new identity over dirty source. Report-only restarts must start at `freeze` for fresh remote identity validation. Any route bypassing implementer likewise requires freeze to rerun. Workflow/documentation edits are not automatically attributable PR fixes, so updating this workflow does not make the current tree restart-ready.
 
 ```bash
-# Default fix-mode graph
+# Fix mode: unchanged safe plan
 omp-swarm restart .omp-swarm/review-pr-195/workflow.yaml --from implementer
-# Report-only graph
+# Fix mode: only after recording explicit same-identity replanning authorization
 omp-swarm restart .omp-swarm/review-pr-195/workflow.yaml --from adjudicate
+# Report-only: fresh identity validation required
+omp-swarm restart .omp-swarm/review-pr-195/workflow.yaml --from freeze
 ```
 
 ## Development

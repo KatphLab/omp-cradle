@@ -13,7 +13,7 @@ swarm:
       role: PR identity and clean-workspace gate
       model: pi/smol
       resume:
-        { id: freeze, contract_version: 5, state_version: 1, policy: strict }
+        { id: freeze, contract_version: 6, state_version: 1, policy: strict }
       control:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/freeze.control.yaml
         allowed_restart_targets: [freeze]
@@ -72,33 +72,71 @@ swarm:
         and require actionable BLOCKED evidence when possible. Existence is never proof.
         Every invocation rereads current inputs/source; preserve unrelated work, replace
         only your own report, retain truthful partial evidence and actionable blockers.
-        Never reset, roll back or automatically restart. Freeze alone reuses published
-        evidence: immutable files/run_id after validated READY and successful continue;
-        before then it may repair its drafts and repeat read-back. Use only
-        submit_control_decision for signals. Invalid published freeze requires an explicit
-        fresh attempt, never repair/replacement/republish by downstream execution.
+        Never reset, roll back or automatically restart. Published freeze files/run_id
+        are immutable after validated READY and successful continue; before then freeze
+        may repair drafts. Authorized recovery also preserves published review evidence.
+        Use only submit_control_decision for signals. Invalid published freeze requires
+        an explicit fresh attempt on clean source, never downstream replacement.
         Before/after each stage and at handoffs inspect HEAD/status/diff, including index
         and untracked source. Require no staging and HEAD equal the PR head once resolved.
-        Source must be clean through adjudication except freeze's explicit restart gate;
-        afterward only exact adjudication.owned_paths may differ, consistent with accepted
-        fixes/implementation evidence. Read-only stages cannot change source/index. Exclude
-        only declared DAG/runtime artifacts, retaining freeze's exact
+        Source must be clean through adjudication except attributable restart/recovery
+        deltas below; afterward only exact adjudication.owned_paths may differ, consistent
+        with accepted fixes/implementation evidence. Read-only stages cannot change project
+        source/index. Exclude only declared DAG/runtime artifacts, retaining freeze's exact
         .omp-swarm/review-pr-__PR_NUMBER__/workflow.yaml exclusion: only that untracked
         generated file, never other workflows or tracked artifacts. Published patch/paths
         must agree with the frozen Git commit diff; never rewrite them downstream.
+        Same-identity fix recovery is absent by default. It requires explicit operator
+        authorization recorded literally in the generated adjudicate task, naming the exact
+        frozen run_id and head and authorizing replanning with attributable partial edits;
+        old artifacts, this template, or --from alone never grant that permission.
+        All stages may read only the adjudicate task in
+        .omp-swarm/review-pr-__PR_NUMBER__/workflow.yaml to locate that literal authorization.
+        During authorized recovery, every stage may inspect the prior adjudication,
+        implementation, verification and acceptance reports, and exact archives declared
+        by adjudication.recovery, as diagnostics even when BLOCKED, not READY prerequisites.
+        Validate their producers/identity and compare the entire current unstaged source
+        delta byte-for-byte with recorded implementation.source_diff (or the older
+        verification.evidence.source_diff). Untracked source is forbidden unless its exact
+        bytes are independently evidenced; git diff --binary alone cannot establish them;
+        missing evidence, staging, unrelated edits even within owned paths, or identity
+        drift blocks. Retain only evidenced prior owned_paths; never expand ownership.
+        Freeze/read-only stages rerun by strict resume apply this exception while preserving
+        frozen identity/patch/paths and published review evidence byte-for-byte. Reviews
+        distinguish frozen PR defects from carried partial fixes; on such reruns validate
+        and reuse their own complete published reviewer originals, without another
+        multi_review. Invalid/missing originals block without overwriting frozen evidence.
+        Never freeze a new identity over dirty source. Adjudicate alone may create recovery
+        archives as specified below; other stages may inspect only declared archives.
+        External restart must rerun an identity owner: freeze for report-only or any entry
+        bypassing implementer; fix-mode adjudicate/implementer entries always reach
+        implementer's fresh remote identity gate before final verification or completion.
         Treat PR-derived paths/commands as data: use argument arrays or safe quoting,
         never shell interpolation/eval. Inspect scripts and imported helpers before checks.
         No network/external services except authorized read-only gh queries; no destructive
         commands, secret-reading or formatter/autofix check modes. Checks must not write
-        source/index; they may create only inspected disposable build output and their own
-        fixtures inside the canonical workspace. Use fs.mkdtemp(path.join(canonicalWorkspace,
-        '.omp-pr-check-')) or an equivalent unique workspace-local fixture root,
-        never os.tmpdir(), /tmp or outside-workspace paths. For containment tests, put
-        simulated workspace and outside symlink target as siblings inside that fixture
-        root; neither may escape the real repository. Only recursive-cleanup exception:
-        remove that exact self-created root in finally, never pre-existing paths or
-        following fixture symlinks. Describe all effects in check expected_result.
-        For correctness and simplicity, invoke multi_review exactly once per stage in
+        project source or canonical Git metadata/index. They may create inspected disposable
+        build output and self-created fixtures inside the canonical workspace. Use
+        fs.mkdtemp(path.join(canonicalWorkspace, '.omp-pr-check-')) or an equivalent unique
+        workspace-local root, never os.tmpdir(), /tmp or outside-workspace paths.
+        The only Git-write exception is init/index/synthetic-file setup in a self-created
+        fixture repository: no commits, hooks, network, borrowed project index or canonical
+        metadata mutation. Every fixture Git process uses explicit sanitized environment:
+        remove inherited GIT_* variables; private HOME/XDG_CONFIG_HOME, GIT_CONFIG_NOSYSTEM=1,
+        GIT_CONFIG_SYSTEM/GLOBAL pointing to a self-created empty config, GIT_ATTR_NOSYSTEM=1,
+        GIT_TERMINAL_PROMPT=0 and GIT_OPTIONAL_LOCKS=0. Use an empty fixture core.hooksPath,
+        empty core.attributesFile/core.excludesFile, protocol.allow=never and GIT_ALLOW_PROTOCOL="";
+        initialize with --template= and contain discovery with GIT_CEILING_DIRECTORIES.
+        Any GIT_DIR/WORK_TREE/INDEX_FILE override must point
+        only inside that self-created repository. Before index writes assert actual
+        --show-toplevel, --absolute-git-dir and resolved index ownership inside it, not
+        the canonical repository. Non-Git fixtures must not discover the parent repository.
+        For containment tests put simulated workspace and outside symlink target as siblings
+        inside the root; neither may escape the real repository. Only recursive-cleanup
+        exception: remove that exact self-created root in finally, never pre-existing paths
+        or following fixture symlinks. Describe every effect in check expected_result.
+        Except for validated published-review reuse during authorized recovery above,
+        correctness and simplicity invoke multi_review exactly once per stage in
         a dedicated functions.eval call: language: js, timeout: 0 (not null/omitted),
         await tool.multi_review(...) and display the complete original result. It waits
         synchronously for all three reviewers; do not mix prerequisites/report writes
@@ -144,9 +182,9 @@ swarm:
           untracked R, runtime state, runner-created signals/tracking/reports/output,
           and exactly .omp-swarm/review-pr-__PR_NUMBER__/workflow.yaml. No other
           .omp-swarm workflow path is excluded; artifact paths tracked by git block.
-          On an explicit restart, permit only prior fixes attributable to this run inside
-          adjudication.owned_paths after inspecting status/diff and prior implementation
-          evidence. Unrelated edits (including within owned paths) or any staging block.
+          On an explicit restart, retain the published identity only after fresh remote
+          validation and exact prior owned-delta attribution under shared recovery rules.
+          Never rewrite the frozen files or create a fresh identity over retained edits.
         Acceptance / verification:
         - Use `git diff --binary MERGE_BASE HEAD` and NUL-delimited name-status
           (including old/new rename paths) to freeze the actual local PR patch/paths.
@@ -179,7 +217,7 @@ swarm:
       resume:
         {
           id: correctness,
-          contract_version: 6,
+          contract_version: 7,
           state_version: 1,
           policy: strict,
         }
@@ -195,18 +233,20 @@ swarm:
         - May edit: R/correctness.yaml only.
         - Must not edit: source, sibling evidence; do not read the simplicity report.
         Decision rules:
-        - Use multi_review under the shared correctness contract. Report only reproducible
-          or concretely traced PR-introduced/exposed defects with severity and uncertainty;
-          do not manufacture findings.
+        - On a fresh review, invoke multi_review once under the shared correctness contract.
+          During authorized recovery, do not invoke it: validate and reuse the complete
+          published originals and preserve R/correctness.yaml unchanged; invalid/missing
+          originals mean BLOCKED, never replacement. Report only reproducible or concretely
+          traced PR-introduced/exposed defects with severity and uncertainty.
         Acceptance / verification:
         - Support findings with exact path/line, behavior/impact and evidence.
         Outputs / handoffs:
-        - Overwrite R/correctness.yaml for adjudicate/acceptance using the shared review
-          schema and disk read-back assertions; producer correctness.
+        - Fresh reviews overwrite R/correctness.yaml for adjudicate/acceptance using the
+          shared schema/read-back assertions; recovery validates it without rewriting.
         Control / correction:
         - No control signal; shared BLOCKED rules apply.
         Retry / failure:
-        - Apply shared input/source revalidation and own-report regeneration rules.
+        - Revalidate current inputs/source; regenerate only outside authorized recovery.
     simplicity:
       type: agent
       role: Independent simplicity and maintainability reviewer
@@ -215,7 +255,7 @@ swarm:
       resume:
         {
           id: simplicity,
-          contract_version: 6,
+          contract_version: 7,
           state_version: 1,
           policy: strict,
         }
@@ -231,18 +271,20 @@ swarm:
         - May edit: R/simplicity.yaml only.
         - Must not edit: source, sibling evidence; do not read the correctness report.
         Decision rules:
-        - Use multi_review for the simplicity scope under the shared contract; prefer
-          deletion/reuse over abstractions. Report demonstrable complexity cost, not taste,
-          speculative rewrites or simplification that weakens safety/contracts.
+        - On a fresh review, invoke multi_review once under the shared simplicity contract.
+          During authorized recovery, do not invoke it: validate and reuse the complete
+          published originals and preserve R/simplicity.yaml unchanged; invalid/missing
+          originals mean BLOCKED, never replacement. Prefer deletion/reuse over abstractions;
+          report concrete complexity cost, not taste or rewrites weakening safety/contracts.
         Acceptance / verification:
         - Show exact locations, existing replacement and preserved observable behavior.
         Outputs / handoffs:
-        - Overwrite R/simplicity.yaml for adjudicate/acceptance using the shared review
-          schema and disk read-back assertions; producer simplicity.
+        - Fresh reviews overwrite R/simplicity.yaml for adjudicate/acceptance using the
+          shared schema/read-back assertions; recovery validates it without rewriting.
         Control / correction:
         - No control signal; shared BLOCKED rules apply.
         Retry / failure:
-        - Apply shared input/source revalidation and own-report regeneration rules.
+        - Revalidate current inputs/source; regenerate only outside authorized recovery.
     adjudicate:
       type: agent
       role: Evidence-based PR finding adjudicator
@@ -251,7 +293,7 @@ swarm:
       resume:
         {
           id: adjudicate,
-          contract_version: 6,
+          contract_version: 7,
           state_version: 1,
           policy: strict,
         }
@@ -266,12 +308,19 @@ swarm:
         Inputs / read:
         - Read R/freeze.yaml, R/correctness.yaml and R/simplicity.yaml from their named
           producers under shared gates, including review findings/coverage/originals.
+        - Recovery authorization is absent by default; only an operator's literal approval
+          in this generated task naming exact run_id/head activates shared recovery.
+          Read prior plan and implementation/verification/acceptance as diagnostics, including
+          BLOCKED reports; they do not replace the READY frozen review prerequisites.
         Scope:
         - Inspect: frozen patch, reported paths and affected callers/tests/docs to
           validate findings. In fix mode also inspect definitions of safe local checks.
-        - May edit: only R/findings.md in report-only mode; only R/adjudication.yaml
-          in fix mode. No project source changes in either mode.
-        - Must not edit: project source, reviews, other evidence or runtime state.
+        - May edit: only R/findings.md in report-only mode; R/adjudication.yaml in fix mode,
+          inspected prerequisite fixtures under shared rules, and exclusively on authorized
+          recovery a new R/recovery-<uuid>/ archive of existing adjudication.yaml,
+          implementation.yaml, verification.yaml and acceptance.md (retain basenames).
+        - Must not edit: project source, reviews, frozen evidence, runtime state or existing
+          archives. No other node owns archive creation; no archive overwrites or cleanup.
         Decision rules:
         - Validate claims, deduplicate and preserve reviewer/model attribution and
           disagreements. Record confirmed, rejected and uncertain findings with reasons;
@@ -283,14 +332,26 @@ swarm:
         - Fix mode: accept only evidenced in-scope minimal fixes; unresolved material
           ambiguity blocks. Name exact repository-relative owned_paths without globs,
           traversal, symlinks or artifact paths. An empty accepted set is valid.
+        - On authorized recovery, validate identity and exact attributed delta first.
+          Keep accepted outcomes and prior ownership bounded; revise unsafe/incomplete check
+          setup without discarding correct partial edits. Before replacing any current plan,
+          exclusively create a unique archive and copy every existing plan/implementation/
+          verification/acceptance report byte-for-byte; read back and compare each copy.
+          Missing optional downstream reports are recorded, never invented. Archive failure
+          blocks without replacing the plan. Upstream frozen/review evidence stays unchanged.
+          A failed recovery must not overwrite the old plan before this archive is complete.
         Acceptance / verification:
         - Account for every reviewer finding; report-only delivers a complete attributed report.
-        - Fix mode: inspect native scripts/hooks; choose focused safe local argv/cwd and
-          expected results covering accepted fixes and relevant PR behavior. No deployment,
-          services, installs, network or external state; no meaningful safe check =>
-          BLOCKED with the missing prerequisite. Apply shared check-write/fixture rules
-          to every command, imported helper and output/cleanup path. Repair unsafe command
-          drafts before publication; the verifier must not rewrite them.
+        - Fix mode: map every material accepted requirement, including security negative
+          cases, to acceptance_cases and check proves. Inspect scripts/imported helpers and
+          all setup/output/cleanup effects. Choose focused safe local exact argv/cwd/results;
+          no safe meaningful check => BLOCKED with the missing prerequisite.
+        - Execute inspected fixture/setup prerequisites BEFORE publishing the plan, not just
+          syntax checks. Record exact argv/cwd/exit/observed results in prerequisites.
+          Setup failure must be repaired before publication or block; an expected pre-fix
+          behavioral assertion failure is evidence of the defect, not a setup failure.
+          Do not demand missing implementation to pass before authorizing its implementer.
+          Repair unsafe drafts now; verifier must independently execute, never rewrite them.
         Outputs / handoffs:
         - Report-only: overwrite R/findings.md at start with BLOCKED/pending, then final
           Markdown for the operator: status COMPLETE|BLOCKED, full identity,
@@ -300,13 +361,19 @@ swarm:
         - Fix mode: overwrite R/adjudication.yaml for implementer/verify/acceptance:
           current identity, decisions,
           accepted_fixes: [{id, rationale, paths, change, acceptance_cases}], owned_paths,
-          checks: [{id, argv, cwd, proves, expected_exit, expected_result}], and limits.
+          checks: [{id, argv, cwd, proves, expected_exit, expected_result}],
+          prerequisites: [{argv, cwd, exit, observed}], and limits. On authorized recovery
+          also include recovery: {archive, retained_paths, source_diff}, with exact archive
+          path, retained prior owned paths and the verified attributable source delta.
         - Apply shared disk read-back assertions with producer adjudicate, including the
           initial pending Markdown. Assert every finding's disposition and accurate
           attribution; findings.md includes all declared sections and no-fixes/no-post-fix
           verification statement. For adjudication.yaml, assert owned_paths equals accepted
           fixes' authorized path union, all declared fix/check fields are complete, checks
-          cover accepted acceptance_cases and relevant PR behavior, and limits reflect evidence.
+          cover every material acceptance case including security negatives and relevant PR
+          behavior, prerequisites prove successful setup, and limits reflect evidence.
+          Recovery read-back also proves archive contents and retained_paths/source_diff
+          match the prior evidence and current tree, without expanding accepted ownership.
         Control / correction:
         - Call submit_control_decision exactly once after read-back: {action: continue}
           for COMPLETE report-only findings or a READY fix plan; otherwise
@@ -321,7 +388,7 @@ swarm:
       resume:
         {
           id: implementer,
-          contract_version: 5,
+          contract_version: 6,
           state_version: 1,
           policy: strict,
         }
@@ -339,25 +406,32 @@ swarm:
         - Must not edit: any other project file, staged/user work, check tooling merely
           to pass checks, sibling evidence or runtime state. Never stage or commit.
         Decision rules:
-        - Immediately before any source edit, independently recheck canonical root, anchors,
-          exact git HEAD, PR/base/head identity and the frozen source commit. Require no
-          staged changes and clean source on first execution. On an explicit restart, inspect
-          status/diff and permit only prior fixes attributable to this run within exact
-          owned_paths; unrelated edits, even inside owned paths, block.
+        - On EVERY invocation, including no accepted fixes/no source edits, independently
+          recheck canonical root, anchors, repository/host/OPEN PR/base/head/merge_base via
+          read-only gh and Git against freeze.identity before any checks, edits or READY.
+          Recheck immediately before source edits. Require no staging and clean source on
+          first execution; restarts permit only exact evidenced prior owned delta, including
+          an authorized recovery's retained_paths/source_diff. Unrelated edits block.
         - Apply smallest complete accepted fixes, including affected callers/tests/docs
-          already owned. Need another path or different fix? BLOCKED, do not expand scope.
-          No accepted fixes means a verified no-change result, not unnecessary editing.
+          already owned. Refine the algorithm within accepted outcomes/owned paths when the
+          first approach is incomplete; that alone is not BLOCKED. Need another path,
+          changed outcome or unsafe published check? Stop with the actual scope/plan blocker.
+          Never change checks merely to pass, delegate or call multi_review. No accepted
+          fixes means a verified no-change result, not unnecessary editing.
         Acceptance / verification:
         - Against the final real diff/status, require all accepted changes addressed,
           exact owned changed/untracked source paths and no weakened verification.
         Outputs / handoffs:
         - Overwrite R/implementation.yaml for verify/acceptance: current identity,
-          addressed_ids, changed_paths, summary, unresolved_findings. READY requires all
+          addressed_ids, changed_paths, source_diff, summary, unresolved_findings. Record
+          exact final unstaged binary source diff and any untracked path/content evidence
+          in source_diff even when BLOCKED, sufficient to attribute retained edits. READY requires all
           accepted IDs addressed with no unresolved issues, including the no-fix case.
         - Shared disk read-back (producer implementer): assert addressed_ids equals accepted
           IDs, changed_paths equals actual owned source changes, summary matches fixes and
-          unresolved_findings is empty for READY. A no-fix result requires actual no-change
-          evidence; BLOCKED must retain truthful partial results.
+          source_diff equals the complete actual source delta (no omitted untracked files),
+          and unresolved_findings is empty for READY. A no-fix result requires actual
+          no-change evidence; BLOCKED must retain truthful partial results.
         Control / correction:
         - No control signal. Partial fixes yield BLOCKED; never launch more implementers.
         Retry / failure:
@@ -369,14 +443,15 @@ swarm:
       model: pi/default
       waits_for: [implementer]
       resume:
-        { id: verify, contract_version: 5, state_version: 1, policy: never }
+        { id: verify, contract_version: 6, state_version: 1, policy: never }
       extra_context: *contract
       task: |
         Outcome:
         - Prove the actual modified tree satisfies the adjudicated safe local checks.
         Inputs / read:
         - Read R/freeze.yaml, adjudicator's R/adjudication.yaml and implementer's
-          R/implementation.yaml under shared gates: complete addressed_ids, no unresolved_findings.
+          R/implementation.yaml under shared gates: READY, complete addressed_ids, no
+          unresolved_findings; prior BLOCKED diagnostics never authorize final verification.
         Scope:
         - Inspect: actual owned source/callers/tests/docs, check definitions and inputs.
         - May edit: R/verification.yaml only; checks may create disposable build output
@@ -385,7 +460,8 @@ swarm:
         - Must not edit: source/tests/config to make checks pass, sibling or runtime evidence.
         Decision rules:
         - Compare actual diff with implementation summary and accepted fixes. Reinspect
-          command safety after implementation; unsafe/missing checks => BLOCKED.
+          command safety after implementation; unsafe/missing checks => BLOCKED. Confirm
+          source_diff matches current source and checks cover security negative requirements.
         Acceptance / verification:
         - Run every adjudicated check freshly against this tree using exact argv/cwd,
           repository-native tools, bounded execution, and no external state. Record
@@ -411,7 +487,7 @@ swarm:
       model: pi/slow
       waits_for: [verify]
       resume:
-        { id: acceptance, contract_version: 5, state_version: 1, policy: never }
+        { id: acceptance, contract_version: 6, state_version: 1, policy: never }
       extra_context: *contract
       control:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/acceptance.control.yaml
@@ -444,7 +520,9 @@ swarm:
         Acceptance / verification:
         - Independently compare actual final diff with frozen PR, plan and implementation
           summary under shared ownership gates. Evaluate fresh observed results against
-          acceptance cases, not implementer claims.
+          acceptance cases, including every material security negative requirement, not
+          implementer claims. Recovery archives are diagnostics only: current implementation
+          and verification must both be READY and match the successor plan/current source.
         Outputs / handoffs:
         - Acceptance writes R/acceptance.md at start with BLOCKED/pending, then final
           Markdown for the operator: schema: 1, producer: acceptance,
