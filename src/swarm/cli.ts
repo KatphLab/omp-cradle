@@ -4,14 +4,20 @@ import { ModelRegistry } from '@oh-my-pi/pi-coding-agent/config/model-registry'
 import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
+import {
+  persistPrReview,
+  preparePrReview,
+  verifyPrReview,
+  type PrReview,
+} from './review-pr'
 import { loadSwarmDefinitionFile } from './swarm/loader'
 import {
   assertModelRoutingPlanCompatible,
   buildModelRoutingPlan,
-  type ModelRoutingPlan,
   normalizeModelRoutingCatalogError,
   renderModelRoutingPlan,
   selectPersistedModelRoutingPlan,
+  type ModelRoutingPlan,
 } from './swarm/model-routing'
 import { PipelineController } from './swarm/pipeline'
 import {
@@ -55,12 +61,16 @@ function usageLines(): string[] {
     '       omp-swarm restart <path-to-yaml> [--reuse <nodes>] [--rerun <nodes>] [--from <node>]',
     '       omp-swarm plan-models <path-to-yaml>',
     '       omp-swarm validate <path-to-yaml>',
+    '       omp-swarm review-pr <positive-number> [--validate] [--report-only]',
     '       omp-swarm --help',
     '',
     'Commands:',
     '  restart <path-to-yaml>   Resume from prior state; starts fresh when no state is found',
     '  plan-models <path-to-yaml> Refresh the authenticated catalog and print a model plan without initializing state or running nodes',
     '  validate <path-to-yaml>  Validate a swarm YAML file without running it',
+    '  review-pr <number>       Review the current GitHub PR head from a clean checkout',
+    '                           --validate renders and validates without writes, auth, or models',
+    '                           --report-only reports findings without changing source (default: fix)',
     '',
     'Run workspace:',
     '  Creates signals/, tracking/, reports/, and output/ before execution',
@@ -139,28 +149,43 @@ if (commandOrPath === '--help' || commandOrPath === '-h') {
 const isValidateCommand = commandOrPath === 'validate'
 const isPlanModelsCommand = commandOrPath === 'plan-models'
 const isRestartCommand = commandOrPath === 'restart'
-const yamlPath =
-  isValidateCommand || isRestartCommand || isPlanModelsCommand
-    ? maybePath
-    : commandOrPath
-if (!yamlPath) {
+const isReviewPrCommand = commandOrPath === 'review-pr'
+let yamlPath: string | undefined
+if (isReviewPrCommand) {
+  yamlPath = undefined
+} else if (isValidateCommand || isRestartCommand || isPlanModelsCommand) {
+  yamlPath = maybePath
+} else {
+  yamlPath = commandOrPath
+}
+if (!yamlPath && !isReviewPrCommand) {
   writeUsageError()
   process.exit(1)
 }
 
-const resolvedPath = path.resolve(yamlPath)
-writeLine(`Reading: ${resolvedPath}`)
+let resolvedPath = ''
+let review: PrReview | undefined
 try {
+  review = isReviewPrCommand
+    ? await preparePrReview(cliArguments.slice(1))
+    : undefined
+  resolvedPath = review?.resolvedPath ?? path.resolve(yamlPath ?? '')
+  writeLine(`Reading: ${resolvedPath}`)
   const restartOverrides = isRestartCommand
     ? parseRestartOverrides(cliArguments.slice(2))
     : {}
   if (
     !isRestartCommand &&
+    !isReviewPrCommand &&
     cliArguments.length > (isValidateCommand || isPlanModelsCommand ? 2 : 1)
   ) {
     throw new Error('Restart options are only valid with the restart command')
   }
-  const swarmDefinition = await loadSwarmDefinitionFile(resolvedPath)
+  if (isReviewPrCommand && review !== undefined && !review.validate) {
+    await verifyPrReview(review)
+  }
+  const swarmDefinition =
+    review?.definition ?? (await loadSwarmDefinitionFile(resolvedPath))
 
   writeLine(`Swarm: ${swarmDefinition.name}`)
   writeLine(`Mode: ${swarmDefinition.mode}`)
@@ -190,15 +215,15 @@ try {
     .join(' -> ')
   writeLine(`Waves: ${waveSummary}`)
 
-  if (isValidateCommand) {
-    writeLine('Validation: ok')
-    process.exit(0)
-  }
-
   const workspace = path.isAbsolute(swarmDefinition.workspace)
     ? swarmDefinition.workspace
     : path.resolve(path.dirname(resolvedPath), swarmDefinition.workspace)
+  writeLine(`Workspace: ${workspace}`)
 
+  if (isValidateCommand || (isReviewPrCommand && review?.validate)) {
+    writeLine('Validation: ok')
+    process.exit(0)
+  }
   if (isPlanModelsCommand && swarmDefinition.modelRouting === undefined) {
     throw new Error(
       'Model planning requires swarm.model_routing.enabled: true at the root.',
@@ -249,9 +274,9 @@ try {
     writeLine(renderModelRoutingPlan(routingPlan).join('\n'))
     process.exit(0)
   }
+  if (review !== undefined && !review.validate) await persistPrReview(review)
 
   await prepareRunDirectories(workspace)
-  writeLine(`Workspace: ${workspace}`)
 
   const restartPlan = isRestartCommand
     ? await createRestartStateTracker(

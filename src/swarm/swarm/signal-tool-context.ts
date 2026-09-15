@@ -108,14 +108,107 @@ function isRepeatSignalToolChannel(
   )
 }
 
+async function signalPathComponentExists(
+  current: string,
+  destination: string,
+): Promise<boolean> {
+  let stat
+  try {
+    stat = await fs.lstat(current)
+  } catch (error_) {
+    if (error_ instanceof Error && 'code' in error_ && error_.code === 'ENOENT')
+      return false
+    throw error_ instanceof Error ? error_ : new Error(String(error_))
+  }
+  if (
+    stat.isSymbolicLink() ||
+    (current !== destination && !stat.isDirectory())
+  ) {
+    throw new Error(
+      'Swarm signal destination must not traverse symlinks or non-directories',
+    )
+  }
+  return true
+}
+
+async function assertSignalDestinationUntracked(
+  root: string,
+  destination: string,
+): Promise<void> {
+  const child = Bun.spawn(
+    [
+      'git',
+      '-c',
+      'core.fsmonitor=false',
+      '--literal-pathspecs',
+      'ls-files',
+      '-z',
+      '--',
+      path.relative(root, destination),
+    ],
+    {
+      cwd: root,
+      env: { ...process.env, LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  )
+  const [stdout, stderr, exitCode] = await Promise.all([
+    child.stdout.text(),
+    child.stderr.text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) {
+    if (
+      exitCode !== 128 ||
+      process.env['GIT_DIR'] !== undefined ||
+      stderr.trim() !==
+        'fatal: not a git repository (or any of the parent directories): .git'
+    ) {
+      throw new Error(
+        'Cannot inspect Git ownership of swarm signal destination',
+      )
+    }
+  } else if (stdout.length > 0) {
+    throw new Error(
+      'Swarm signal destination must not replace or delete tracked files',
+    )
+  }
+}
+
+async function workspaceSignalDestination(
+  workspace: string,
+  signal: string,
+): Promise<string> {
+  if (!isSafeRelativePath(signal)) {
+    throw new Error('Swarm signal destination is not a safe workspace path')
+  }
+  try {
+    const root = path.resolve(workspace)
+    if ((await fs.realpath(root)) !== root) {
+      throw new Error('Swarm signal workspace must be a canonical directory')
+    }
+    const destination = path.resolve(root, signal)
+    let current = root
+    for (const component of [
+      '',
+      ...path.relative(root, destination).split(path.sep),
+    ]) {
+      current = path.join(current, component)
+      if (!(await signalPathComponentExists(current, destination))) break
+    }
+    await assertSignalDestinationUntracked(root, destination)
+    return destination
+  } catch (error_) {
+    throw error_ instanceof Error ? error_ : new Error(String(error_))
+  }
+}
 export async function removeWorkspaceSignal(
   workspace: string,
   signal: string,
 ): Promise<void> {
-  if (!isSafeRelativePath(signal)) {
-    throw new Error('Swarm signal destination is not a safe workspace path')
-  }
-  await fs.rm(path.resolve(workspace, signal), { force: true })
+  const destination = await workspaceSignalDestination(workspace, signal)
+  await fs.rm(destination, { force: true })
 }
 
 export async function writeWorkspaceSignal(
@@ -123,10 +216,7 @@ export async function writeWorkspaceSignal(
   signal: string,
   content: string,
 ): Promise<void> {
-  if (!isSafeRelativePath(signal)) {
-    throw new Error('Swarm signal destination is not a safe workspace path')
-  }
-  const destination = path.resolve(workspace, signal)
+  const destination = await workspaceSignalDestination(workspace, signal)
   const temporary = path.join(
     path.dirname(destination),
     `.${path.basename(destination)}.${randomUUID()}.tmp`,

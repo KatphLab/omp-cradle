@@ -39,12 +39,13 @@
     "typescript-eslint": "^8.58.1"
   },
   "peerDependencies": {
-    "@oh-my-pi/pi-ai": "*",
-    "@oh-my-pi/pi-catalog": "*",
-    "@oh-my-pi/pi-coding-agent": "*"
+    "@oh-my-pi/pi-ai": "^18.1.17",
+    "@oh-my-pi/pi-catalog": "^18.1.17",
+    "@oh-my-pi/pi-coding-agent": "^18.1.17"
   },
   "omp": {
     "extensions": [
+      "./src/i-have-adhd/index.ts",
       "./src/commit-command/index.ts",
       "./src/council/index.ts",
       "./src/swarm/index.ts",

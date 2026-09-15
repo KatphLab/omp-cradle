@@ -1064,7 +1064,11 @@ function priceSelection(
   policy: SwarmModelRoutingPolicy,
   exposure: ModelRoutingNodePlan['exposure'],
 ): { selection: PricedSelection; error?: never } | { error: string } {
-  const buckets: [keyof ModelUsageEstimate, keyof Model['cost'], string][] = [
+  const buckets: [
+    keyof ModelUsageEstimate,
+    keyof ModelRoutingNodePlan['catalogRates'],
+    string,
+  ][] = [
     ['inputTokens', 'input', 'input'],
     ['outputTokens', 'output', 'output'],
     ['cacheReadTokens', 'cacheRead', 'cache read'],

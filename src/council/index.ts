@@ -15,10 +15,12 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from '@oh-my-pi/pi-coding-agent'
+import { registerMultiReview } from '../multi-review'
 import { runCouncil, type CouncilResult } from './runner'
 
 export default function councilExtension(pi: ExtensionAPI): void {
   pi.setLabel('Council')
+  registerMultiReview(pi)
 
   pi.registerCommand('council', {
     description: 'Convene a council of smol subagents to analyze a question',
