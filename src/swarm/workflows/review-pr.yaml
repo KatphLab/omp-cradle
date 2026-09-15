@@ -214,12 +214,12 @@ swarm:
       type: agent
       role: Independent correctness and security reviewer
       model: pi/smol
-      tools: [read, grep, glob, write, multi_review]
+      tools: [read, grep, glob, bash, eval, write, multi_review]
       waits_for: [freeze]
       resume:
         {
           id: correctness,
-          contract_version: 7,
+          contract_version: 8,
           state_version: 1,
           policy: strict,
         }
@@ -253,12 +253,12 @@ swarm:
       type: agent
       role: Independent simplicity and maintainability reviewer
       model: pi/smol
-      tools: [read, grep, glob, write, multi_review]
+      tools: [read, grep, glob, bash, eval, write, multi_review]
       waits_for: [freeze]
       resume:
         {
           id: simplicity,
-          contract_version: 7,
+          contract_version: 8,
           state_version: 1,
           policy: strict,
         }

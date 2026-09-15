@@ -3,11 +3,17 @@ import type {
   CustomToolContext,
   ExtensionAPI,
 } from '@oh-my-pi/pi-coding-agent'
+import { resolveModelOverride } from '@oh-my-pi/pi-coding-agent/config/model-resolver'
+import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import {
   runSubprocess,
   type ExecutorOptions,
 } from '@oh-my-pi/pi-coding-agent/task/executor'
-import type { AgentDefinition } from '@oh-my-pi/pi-coding-agent/task/types'
+import type {
+  AgentDefinition,
+  SingleResult,
+} from '@oh-my-pi/pi-coding-agent/task/types'
+import { randomUUID } from 'node:crypto'
 
 const synthesisInstructions =
   'Synthesize these independent results: deduplicate findings, preserve disagreements, ' +
@@ -86,7 +92,64 @@ function parseMultiReviewParameters(value: unknown): MultiReviewParameters {
     ...(record['context'] === undefined ? {} : { context: record['context'] }),
   }
 }
+interface ReviewerModel {
+  provider: string
+  id: string
+}
 
+interface ResolvedReviewer {
+  agent: AgentDefinition
+  alias: string
+  resolved: { model?: ReviewerModel; thinkingLevel?: string }
+}
+
+function reviewerStatus(
+  result: SingleResult,
+): 'completed' | 'failed' | 'aborted' {
+  if (result.aborted) return 'aborted'
+  if (result.exitCode !== 0) return 'failed'
+  return 'completed'
+}
+
+function reviewerModelSelector(
+  result: ReviewerModel,
+  thinkingLevel: string | undefined,
+): string {
+  const suffix = thinkingLevel === undefined ? '' : `:${thinkingLevel}`
+  return `${result.provider}/${result.id}${suffix}`
+}
+
+function buildReviewersReport(
+  results: SingleResult[],
+  reviewers: ResolvedReviewer[],
+): {
+  alias: string
+  reviewer: string
+  model: string | undefined
+  status: 'completed' | 'failed' | 'aborted'
+  exitCode: number
+  output: string
+  stderr: string
+  error: string | undefined
+  abortReason: string | undefined
+}[] {
+  return results.map((result, index) => {
+    const reviewer = reviewers.at(index)
+    if (reviewer === undefined)
+      throw new Error('Reviewer result count changed during execution')
+    return {
+      alias: reviewer.alias,
+      reviewer: result.agent,
+      model: result.resolvedModel,
+      status: reviewerStatus(result),
+      exitCode: result.exitCode,
+      output: result.output,
+      stderr: result.stderr,
+      error: result.error,
+      abortReason: result.abortReason,
+    }
+  })
+}
 async function executeMultiReview(
   params: MultiReviewParameters,
   signal: AbortSignal | undefined,
@@ -95,6 +158,29 @@ async function executeMultiReview(
   modelRegistry: CustomToolContext['modelRegistry'],
 ) {
   signal?.throwIfAborted()
+  settings ??= await Settings.loadReadOnly({ cwd })
+  const reviewers: ResolvedReviewer[] = reviewerDefinitions.map(
+    ({ agent, model }) => ({
+      agent,
+      alias: model,
+      resolved: resolveModelOverride([model], modelRegistry, settings),
+    }),
+  )
+  const unavailable = reviewers.filter(
+    ({ resolved }) => resolved.model === undefined,
+  )
+  if (unavailable.length > 0) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text' as const,
+          text: `Review not started: cannot resolve ${unavailable.map(({ alias }) => alias).join(', ')}. Configure these model roles with available models.`,
+        },
+      ],
+    }
+  }
+  const invocationId = randomUUID()
   const assignment = [
     `Review target:\n${params.target}`,
     `Acceptance criteria:\n${params.acceptanceCriteria}`,
@@ -102,16 +188,23 @@ async function executeMultiReview(
     'Return findings ordered by severity with exact locations and evidence; explicitly say if there are none.',
   ].join('\n\n')
   const results = await Promise.all(
-    reviewerDefinitions.map(({ agent, model }, index) => {
+    reviewers.map(({ agent, alias, resolved }, index) => {
+      const resolvedModel = resolved.model
+      if (resolvedModel === undefined)
+        throw new Error(`Reviewer model unavailable: ${alias}`)
       const options: ExecutorOptions = {
         cwd,
         agent,
         task: assignment,
         assignment,
         index,
-        id: `multi-review-${agent.name}`,
-        modelOverride: model,
-        ...(settings === undefined ? {} : { settings }),
+        id: `multi-review-${invocationId}-${agent.name}`,
+        modelOverride: reviewerModelSelector(
+          resolvedModel,
+          resolved.thinkingLevel,
+        ),
+        modelRole: alias,
+        settings,
         modelRegistry,
         restrictToolNames: true,
         enableMCP: false,
@@ -122,15 +215,15 @@ async function executeMultiReview(
       return runSubprocess(options)
     }),
   )
-  const report = results
-    .map(
-      (result) =>
-        `${result.agent} (${result.agentSource}):\n${result.output || result.stderr || '(no findings)'}`,
-    )
-    .join('\n\n')
+  const reviewersReport = buildReviewersReport(results, reviewers)
   return {
+    isError: reviewersReport.some(({ status }) => status !== 'completed'),
+    details: { reviewers: reviewersReport },
     content: [
-      { type: 'text' as const, text: report },
+      {
+        type: 'text' as const,
+        text: JSON.stringify(reviewersReport, undefined, 2),
+      },
       { type: 'text' as const, text: synthesisInstructions },
     ],
   }
