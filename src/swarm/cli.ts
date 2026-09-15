@@ -170,7 +170,7 @@ try {
     ? await preparePrReview(cliArguments.slice(1))
     : undefined
   resolvedPath = review?.resolvedPath ?? path.resolve(yamlPath ?? '')
-  writeLine(['Reading: ', resolvedPath].join(''))
+  writeLine(`Reading: ${resolvedPath}`)
   const restartOverrides = isRestartCommand
     ? parseRestartOverrides(cliArguments.slice(2))
     : {}
@@ -218,7 +218,7 @@ try {
   const workspace = path.isAbsolute(swarmDefinition.workspace)
     ? swarmDefinition.workspace
     : path.resolve(path.dirname(resolvedPath), swarmDefinition.workspace)
-  writeLine(['Workspace: ', workspace].join(''))
+  writeLine(`Workspace: ${workspace}`)
 
   if (isValidateCommand || (isReviewPrCommand && review?.validate)) {
     writeLine('Validation: ok')

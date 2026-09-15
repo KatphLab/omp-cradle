@@ -210,7 +210,7 @@ function registerBashSeverityTool(
       command: pi.zod.string().describe('The shell command to execute'),
       severity: pi.zod.enum(SEVERITIES).describe('Command severity'),
     }),
-    approval: () => 'exec',
+    approval: 'exec',
     async execute(
       _toolCallId,
       parameters: { command: string; severity: BashSeverity },

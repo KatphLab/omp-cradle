@@ -12,6 +12,7 @@ swarm:
       type: agent
       role: PR identity and clean-workspace gate
       model: pi/smol
+      tools: [read, grep, glob, bash, write, submit_control_decision]
       resume:
         { id: freeze, contract_version: 6, state_version: 1, policy: strict }
       control:
@@ -213,6 +214,7 @@ swarm:
       type: agent
       role: Independent correctness and security reviewer
       model: pi/smol
+      tools: [read, grep, glob, write, multi_review]
       waits_for: [freeze]
       resume:
         {
@@ -251,6 +253,7 @@ swarm:
       type: agent
       role: Independent simplicity and maintainability reviewer
       model: pi/smol
+      tools: [read, grep, glob, write, multi_review]
       waits_for: [freeze]
       resume:
         {
@@ -289,6 +292,7 @@ swarm:
       type: agent
       role: Evidence-based PR finding adjudicator
       model: pi/smol
+      tools: [read, grep, glob, bash, write, submit_control_decision]
       waits_for: [correctness, simplicity]
       resume:
         {
@@ -384,6 +388,7 @@ swarm:
       type: agent
       role: Sole implementer of accepted PR fixes
       model: pi/smol
+      tools: [read, grep, glob, bash, edit, write]
       waits_for: [adjudicate]
       resume:
         {
@@ -441,6 +446,7 @@ swarm:
       type: agent
       role: Independent local verification executor
       model: pi/smol
+      tools: [read, grep, glob, bash, write]
       waits_for: [implementer]
       resume:
         { id: verify, contract_version: 6, state_version: 1, policy: never }
@@ -485,6 +491,7 @@ swarm:
       type: agent
       role: Independent final PR acceptance controller
       model: pi/smol
+      tools: [read, grep, glob, bash, write, submit_control_decision]
       waits_for: [verify]
       resume:
         { id: acceptance, contract_version: 6, state_version: 1, policy: never }

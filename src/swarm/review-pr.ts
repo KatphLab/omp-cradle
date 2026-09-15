@@ -20,8 +20,8 @@ async function commandOutput(argv: string[], cwd: string): Promise<string> {
   ])
   if (exitCode !== 0) {
     const command = argv.at(0) ?? 'command'
-    const detail = stderr.trim() || ['exit', exitCode].join(' ')
-    throw new Error([command, 'failed', detail].join(' '))
+    const detail = stderr.trim() || `exit ${exitCode}`
+    throw new Error(`${command} failed ${detail}`)
   }
   return stdout
 }
@@ -60,8 +60,9 @@ export async function preparePrReview(arguments_: string[]): Promise<PrReview> {
   let content = template
     .replaceAll('__PR_NUMBER__', number)
     .replaceAll('__REVIEW_MODE__', reportOnly ? 'report-only' : 'fix')
-    .replace(/^ {2}workspace: \.$/m, () =>
-      ['  workspace: ', JSON.stringify(workspace)].join(''),
+    .replace(
+      /^ {2}workspace: \.$/m,
+      () => `  workspace: ${JSON.stringify(workspace)}`,
     )
   if (reportOnly) content = reportOnlyYaml(content)
   const definition = parseSwarmYaml(content)

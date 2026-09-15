@@ -1,6 +1,7 @@
 /**
  * Swarm agent execution via oh-my-pi's subagent infrastructure.
  */
+import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 import type { ModelRegistry } from '@oh-my-pi/pi-coding-agent/config/model-registry'
 import type { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import {
@@ -13,6 +14,8 @@ import type {
   SingleResult,
 } from '@oh-my-pi/pi-coding-agent/task/types'
 import path from 'node:path'
+import { createMultiReviewTool } from '../../multi-review'
+import { createSwarmSignalTools } from '../signal-tools'
 import type { SwarmAgent } from './schema'
 import {
   CONTROL_DECISION_TOOL_NAME,
@@ -86,6 +89,8 @@ function buildExecutorOptions(
   index: number,
   options: SwarmExecutorOptions,
 ): ExecutorOptions {
+  const tools = buildAgentTools(agent.tools, options.signalToolContext)
+  const customTools = buildCustomTools(tools, options.signalToolContext)
   const executorOptions: ExecutorOptions = {
     cwd: options.workspace,
     agent: buildAgentDefinition(agent, options.signalToolContext),
@@ -105,6 +110,19 @@ function buildExecutorOptions(
       options.onProgress?.(agent.name, progress)
     },
     enableLsp: false,
+    enableMCP: false,
+    enableIrc: false,
+    restrictToolNames: customTools.length === 0,
+    extensionRoots: () => ({
+      explicit: [],
+      mode: 'explicit-only' as const,
+      configured: [],
+      configuredLevel: 'project' as const,
+    }),
+    preloadedExtensionPaths: [],
+    preloadedPreparedExtensions: [],
+    preloadedCustomToolPaths: [],
+    ...(customTools.length === 0 ? {} : { customTools }),
     artifactsDir: path.join(options.stateTracker.swarmDir, 'context'),
   }
   if (options.modelOverride !== undefined)
@@ -152,6 +170,20 @@ function buildAgentTools(
     tools.push(REPEAT_DECISION_TOOL_NAME)
   }
   return tools
+}
+
+function buildCustomTools(
+  tools: string[] | undefined,
+  signalToolContext: SwarmSignalToolContext | undefined,
+): CustomTool[] {
+  const customTools: CustomTool[] = []
+  if (signalToolContext !== undefined) {
+    for (const signalTool of createSwarmSignalTools()) {
+      if (tools?.includes(signalTool.name)) customTools.push(signalTool)
+    }
+  }
+  if (tools?.includes('multi_review')) customTools.push(createMultiReviewTool())
+  return customTools
 }
 
 function buildRunId(
