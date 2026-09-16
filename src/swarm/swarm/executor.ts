@@ -95,6 +95,9 @@ function buildSessionOptions(
     enableIrc: false,
     disableExtensionDiscovery: true,
     spawns: '',
+    taskDepth: 1,
+    agentName: agent.name,
+    agentDisplayName: agent.name,
     ...(options.modelOverride === undefined
       ? {}
       : { modelPattern: options.modelOverride }),
@@ -117,6 +120,7 @@ async function runSession(
   const { session } = await createAgentSession({
     ...buildSessionOptions(agent, options),
     sessionManager,
+    agentId: sessionManager.getSessionId(),
   })
   const started = Date.now()
   const progress = initialProgress(agent, index, id)
