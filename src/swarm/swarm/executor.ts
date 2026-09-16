@@ -89,11 +89,15 @@ function buildExecutorOptions(
   index: number,
   options: SwarmExecutorOptions,
 ): ExecutorOptions {
-  const tools = buildAgentTools(agent.tools, options.signalToolContext)
-  const customTools = buildCustomTools(tools, options.signalToolContext)
+  const agentDefinition = buildAgentDefinition(agent, options.signalToolContext)
+  const customTools = buildCustomTools(
+    agentDefinition.tools,
+    options.signalToolContext,
+  )
+  const restrictToolNames = agentDefinition.tools !== undefined
   const executorOptions: ExecutorOptions = {
     cwd: options.workspace,
-    agent: buildAgentDefinition(agent, options.signalToolContext),
+    agent: agentDefinition,
     task: agent.task,
     index,
     id: buildRunId(agent, options),
@@ -112,7 +116,10 @@ function buildExecutorOptions(
     enableLsp: false,
     enableMCP: false,
     enableIrc: false,
-    restrictToolNames: customTools.length === 0,
+    restrictToolNames,
+    ...(restrictToolNames && customTools.length > 0
+      ? { allowRestrictedCustomTools: true }
+      : {}),
     extensionRoots: () => ({
       explicit: [],
       mode: 'explicit-only' as const,
@@ -179,7 +186,11 @@ function buildCustomTools(
   const customTools: CustomTool[] = []
   if (signalToolContext !== undefined) {
     for (const signalTool of createSwarmSignalTools()) {
-      if (tools?.includes(signalTool.name)) customTools.push(signalTool)
+      const applicable =
+        signalTool.name === CONTROL_DECISION_TOOL_NAME
+          ? signalToolContext.controls.length > 0
+          : signalToolContext.repeats.length > 0
+      if (applicable) customTools.push(signalTool)
     }
   }
   if (tools?.includes('multi_review')) customTools.push(createMultiReviewTool())

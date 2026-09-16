@@ -325,6 +325,9 @@ swarm:
           implementation.yaml, verification.yaml and acceptance.md (retain basenames).
         - Must not edit: project source, reviews, frozen evidence, runtime state or existing
           archives. No other node owns archive creation; no archive overwrites or cleanup.
+        - Tooling files are out of scope: never accept or propose edits to the
+          package manifests/lockfiles, CI configuration or task-runner
+          configuration.
         Decision rules:
         - Validate claims, deduplicate and preserve reviewer/model attribution and
           disagreements. Record confirmed, rejected and uncertain findings with reasons;
@@ -356,6 +359,9 @@ swarm:
           behavioral assertion failure is evidence of the defect, not a setup failure.
           Do not demand missing implementation to pass before authorizing its implementer.
           Repair unsafe drafts now; verifier must independently execute, never rewrite them.
+        - Signal-tool check fixtures must use root/context/agent.jsonl as sessionFile beside
+          root/context/agent.signal-tools.json; before publishing, verify that the exact
+          session-derived lookup path reads the context successfully via readSignalToolContext.
         Outputs / handoffs:
         - Report-only: overwrite R/findings.md at start with BLOCKED/pending, then final
           Markdown for the operator: status COMPLETE|BLOCKED, full identity,
@@ -410,6 +416,9 @@ swarm:
         - May edit: exactly adjudication.owned_paths and R/implementation.yaml only.
         - Must not edit: any other project file, staged/user work, check tooling merely
           to pass checks, sibling evidence or runtime state. Never stage or commit.
+        - Tooling files remain forbidden even when an accepted finding mentions them:
+          do not add, remove or edit task-runner/configuration files such as justfile,
+          package manifests, lockfiles or CI configuration.
         Decision rules:
         - On EVERY invocation, including no accepted fixes/no source edits, independently
           recheck canonical root, anchors, repository/host/OPEN PR/base/head/merge_base via
@@ -543,9 +552,11 @@ swarm:
           limits and blockers. ACCEPTED must agree with all six READY reports and inspected
           source; BLOCKED must not fabricate unavailable evidence.
         Control / correction:
-        - Call submit_control_decision exactly once: {action: continue} only for current
-          ACCEPTED verdict with passing read-back; otherwise {action: fail, reason: concrete
-          blockers}. Never restart or silently accept partial work.
+        - Call submit_control_decision exactly once with scope "root/acceptance":
+          {action: continue, scope: "root/acceptance"} only for current ACCEPTED verdict
+          with passing read-back; otherwise {action: fail, scope: "root/acceptance",
+          reason: concrete blockers}. Require successful submission before returning.
+          Never restart or silently accept partial work.
         Retry / failure:
         - Replace the verdict under shared revalidation/preservation rules. Failed report
           write is failure, not acceptance; operator resolves blockers after this single pass.

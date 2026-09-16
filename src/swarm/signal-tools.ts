@@ -31,6 +31,28 @@ interface RepeatDecisionInput {
   scope?: string
 }
 
+interface DecisionContext<T> {
+  params: T
+  signal: AbortSignal | undefined
+  cwd: string
+  sessionFile: string | undefined
+  submitted: Set<string>
+}
+
+function decisionContext<T>(
+  params: T,
+  signal: AbortSignal | undefined,
+  ctx: ExtensionContext,
+  submitted: Set<string>,
+): DecisionContext<T> {
+  return {
+    params,
+    signal,
+    cwd: ctx.cwd,
+    sessionFile: ctx.sessionManager.getSessionFile(),
+    submitted,
+  }
+}
 export function registerSwarmSignalTools(pi: ExtensionAPI): void {
   registerControlDecisionTool(pi, new Set())
   registerRepeatDecisionTool(pi, new Set())
@@ -74,11 +96,7 @@ function registerControlDecisionTool(
       ctx: ExtensionContext,
     ) {
       await submitControlDecision(
-        params,
-        signal,
-        ctx.cwd,
-        ctx.sessionManager.getSessionFile(),
-        submitted,
+        decisionContext(params, signal, ctx, submitted),
       )
       return toolResult(`Recorded '${params.action}'`)
     },
@@ -108,11 +126,7 @@ function registerRepeatDecisionTool(
       ctx: ExtensionContext,
     ) {
       await submitRepeatDecision(
-        params,
-        signal,
-        ctx.cwd,
-        ctx.sessionManager.getSessionFile(),
-        submitted,
+        decisionContext(params, signal, ctx, submitted),
       )
       return toolResult(`Recorded '${params.action}'`)
     },
@@ -120,18 +134,19 @@ function registerRepeatDecisionTool(
 }
 
 async function submitControlDecision(
-  params: ControlDecisionInput,
-  signal: AbortSignal | undefined,
-  cwd: string,
-  sessionFile: string | undefined,
-  submitted: Set<string>,
+  context: DecisionContext<ControlDecisionInput>,
 ): Promise<void> {
+  const { params, signal, cwd, sessionFile, submitted } = context
   if (params.scope !== undefined) params.scope = params.scope.trim()
   if (params.action === 'restart') params.target = params.target.trim()
   if (params.reason !== undefined) params.reason = params.reason.trim()
   assertNotAborted(signal)
-  const context = await readSignalToolContext(sessionFile)
-  const channel = resolveChannel(context.controls, params.scope, 'control')
+  const signalContext = await readSignalToolContext(sessionFile)
+  const channel = resolveChannel(
+    signalContext.controls,
+    params.scope,
+    'control',
+  )
   if (submitted.has(channel.scope))
     throw new Error(
       `Control decision for scope '${channel.scope}' was already submitted`,
@@ -148,16 +163,13 @@ async function submitControlDecision(
 }
 
 async function submitRepeatDecision(
-  params: RepeatDecisionInput,
-  signal: AbortSignal | undefined,
-  cwd: string,
-  sessionFile: string | undefined,
-  submitted: Set<string>,
+  context: DecisionContext<RepeatDecisionInput>,
 ): Promise<void> {
+  const { params, signal, cwd, sessionFile, submitted } = context
   if (params.scope !== undefined) params.scope = params.scope.trim()
   assertNotAborted(signal)
-  const context = await readSignalToolContext(sessionFile)
-  const channel = resolveChannel(context.repeats, params.scope, 'repeat')
+  const signalContext = await readSignalToolContext(sessionFile)
+  const channel = resolveChannel(signalContext.repeats, params.scope, 'repeat')
   if (submitted.has(channel.scope))
     throw new Error(
       `Repeat decision for scope '${channel.scope}' was already submitted`,
@@ -288,8 +300,7 @@ function parseRepeatDecision(value: unknown): RepeatDecisionInput {
 }
 
 export function createSwarmSignalTools(): CustomTool[] {
-  const submitted = new Set<string>()
-  return [createControlSignalTool(submitted), createRepeatSignalTool(submitted)]
+  return [createControlSignalTool(new Set()), createRepeatSignalTool(new Set())]
 }
 
 function createControlSignalTool(submitted: Set<string>): CustomTool {
@@ -310,13 +321,13 @@ function createControlSignalTool(submitted: Set<string>): CustomTool {
     },
     async execute(_id, rawParameters, _onUpdate, ctx, signal) {
       const params = parseControlDecision(rawParameters)
-      await submitControlDecision(
+      await submitControlDecision({
         params,
         signal,
-        ctx.sessionManager.getCwd(),
-        ctx.sessionManager.getSessionFile(),
+        cwd: ctx.sessionManager.getCwd(),
+        sessionFile: ctx.sessionManager.getSessionFile(),
         submitted,
-      )
+      })
       return toolResult(`Recorded '${params.action}'`)
     },
   } as CustomTool
@@ -338,13 +349,13 @@ function createRepeatSignalTool(submitted: Set<string>): CustomTool {
     },
     async execute(_id, rawParameters, _onUpdate, ctx, signal) {
       const params = parseRepeatDecision(rawParameters)
-      await submitRepeatDecision(
+      await submitRepeatDecision({
         params,
         signal,
-        ctx.sessionManager.getCwd(),
-        ctx.sessionManager.getSessionFile(),
+        cwd: ctx.sessionManager.getCwd(),
+        sessionFile: ctx.sessionManager.getSessionFile(),
         submitted,
-      )
+      })
       return toolResult(`Recorded '${params.action}'`)
     },
   } as CustomTool

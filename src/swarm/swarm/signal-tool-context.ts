@@ -131,11 +131,113 @@ async function signalPathComponentExists(
   return true
 }
 
+type SignalGitEnvironment = Record<string, string | undefined>
+
+function signalGitEnvironment(root: string): SignalGitEnvironment {
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
+  )
+  Object.assign(environment, {
+    LC_ALL: 'C',
+    GIT_OPTIONAL_LOCKS: '0',
+    GIT_CEILING_DIRECTORIES: root,
+  })
+  return environment
+}
+
+function isMissingGitRepository(exitCode: number, error: string): boolean {
+  return (
+    exitCode === 128 &&
+    error.trim() ===
+      'fatal: not a git repository (or any of the parent directories): .git'
+  )
+}
+
+function assertGitContextPaths(
+  root: string,
+  topLevel: string | undefined,
+  gitDirectory: string | undefined,
+): [string, string] {
+  if (topLevel === undefined || gitDirectory === undefined) {
+    throw new Error('Cannot inspect Git ownership of swarm signal destination')
+  }
+  if (
+    path.resolve(topLevel) !== topLevel ||
+    path.resolve(gitDirectory) !== gitDirectory
+  ) {
+    throw new Error('Cannot inspect Git ownership of swarm signal destination')
+  }
+  const relativeRoot = path.relative(topLevel, root)
+  if (
+    relativeRoot === '..' ||
+    relativeRoot.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeRoot)
+  ) {
+    throw new Error('Cannot inspect Git ownership of swarm signal destination')
+  }
+  return [topLevel, gitDirectory]
+}
+
+async function assertCanonicalGitContext(
+  topLevel: string,
+  gitDirectory: string,
+): Promise<void> {
+  try {
+    if (
+      (await fs.realpath(topLevel)) !== topLevel ||
+      (await fs.realpath(gitDirectory)) !== gitDirectory
+    )
+      throw new Error('Git context is not canonical')
+  } catch {
+    throw new Error('Cannot inspect Git ownership of swarm signal destination')
+  }
+}
+
+async function assertGitContext(
+  root: string,
+  environment: SignalGitEnvironment,
+): Promise<void> {
+  const contextProcess = Bun.spawn(
+    [
+      'git',
+      '-c',
+      'core.fsmonitor=false',
+      'rev-parse',
+      '--show-toplevel',
+      '--absolute-git-dir',
+    ],
+    {
+      cwd: root,
+      env: environment,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  )
+  const [contextOutput, contextError, contextExitCode] = await Promise.all([
+    contextProcess.stdout.text(),
+    contextProcess.stderr.text(),
+    contextProcess.exited,
+  ])
+  if (isMissingGitRepository(contextExitCode, contextError)) return
+  if (contextExitCode !== 0) {
+    throw new Error('Cannot inspect Git ownership of swarm signal destination')
+  }
+  const [topLevel, gitDirectory] = contextOutput.trimEnd().split('\n')
+  const [canonicalTopLevel, canonicalGitDirectory] = assertGitContextPaths(
+    root,
+    topLevel,
+    gitDirectory,
+  )
+  await assertCanonicalGitContext(canonicalTopLevel, canonicalGitDirectory)
+}
+
 async function assertSignalDestinationUntracked(
   root: string,
   destination: string,
 ): Promise<void> {
-  const child = Bun.spawn(
+  const environment = signalGitEnvironment(root)
+  await assertGitContext(root, environment)
+  const ownershipProcess = Bun.spawn(
     [
       'git',
       '-c',
@@ -148,28 +250,20 @@ async function assertSignalDestinationUntracked(
     ],
     {
       cwd: root,
-      env: { ...process.env, LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' },
+      env: environment,
       stdout: 'pipe',
       stderr: 'pipe',
     },
   )
-  const [stdout, stderr, exitCode] = await Promise.all([
-    child.stdout.text(),
-    child.stderr.text(),
-    child.exited,
+  const [stdout, , exitCode] = await Promise.all([
+    ownershipProcess.stdout.text(),
+    ownershipProcess.stderr.text(),
+    ownershipProcess.exited,
   ])
   if (exitCode !== 0) {
-    if (
-      exitCode !== 128 ||
-      process.env['GIT_DIR'] !== undefined ||
-      stderr.trim() !==
-        'fatal: not a git repository (or any of the parent directories): .git'
-    ) {
-      throw new Error(
-        'Cannot inspect Git ownership of swarm signal destination',
-      )
-    }
-  } else if (stdout.length > 0) {
+    throw new Error('Cannot inspect Git ownership of swarm signal destination')
+  }
+  if (stdout.length > 0) {
     throw new Error(
       'Swarm signal destination must not replace or delete tracked files',
     )

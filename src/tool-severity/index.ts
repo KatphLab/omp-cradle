@@ -200,7 +200,6 @@ function registerBashSeverityTool(
   pi: ExtensionAPI,
   state: ToolSeverityState,
 ): void {
-  const rejectedCommands = new Set<string>()
   pi.registerTool({
     name: 'bash',
     label: 'Bash',
@@ -223,7 +222,7 @@ function registerBashSeverityTool(
           context,
           parameters.command,
           parameters.severity,
-          rejectedCommands,
+          state.rejected,
           state.promptsEnabled,
         )
         if (rejectionMessage !== undefined) {
@@ -294,12 +293,14 @@ export default function toolSeverityExtension(pi: ExtensionAPI): void {
       return Promise.resolve()
     },
   })
-  pi.on('session_switch', () => {
+  const resetSessionState = () => {
     state.promptsEnabled = true
-  })
-  pi.on('session_branch', () => {
-    state.promptsEnabled = true
-  })
+    state.rejected.clear()
+    state.pending.clear()
+    state.targetsByKey.clear()
+  }
+  pi.on('session_switch', resetSessionState)
+  pi.on('session_branch', resetSessionState)
 
   registerEditSeverityTool(pi, state)
   registerBashSeverityTool(pi, state)

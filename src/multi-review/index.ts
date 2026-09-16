@@ -26,42 +26,32 @@ const reviewerDefinitions: readonly {
   model: string
 }[] = [
   {
-    model: 'pi/smol',
-    agent: {
-      name: 'reviewer-smol',
-      description: 'Read-only small-model reviewer',
-      systemPrompt:
-        'Review the supplied target independently. Do not edit files or coordinate with other reviewers.',
-      tools: ['read', 'grep', 'glob'],
-      model: ['pi/smol'],
-      source: 'bundled',
-    },
+    alias: 'reviewer-smol',
+    description: 'Read-only small-model reviewer',
   },
   {
-    model: 'pi/default',
-    agent: {
-      name: 'reviewer-default',
-      description: 'Read-only default-model reviewer',
-      systemPrompt:
-        'Review the supplied target independently. Do not edit files or coordinate with other reviewers.',
-      tools: ['read', 'grep', 'glob'],
-      model: ['pi/default'],
-      source: 'bundled',
-    },
+    alias: 'reviewer-default',
+    description: 'Read-only default-model reviewer',
   },
   {
-    model: 'pi/slow',
+    alias: 'reviewer-slow',
+    description: 'Read-only slow-model reviewer',
+  },
+].map(({ alias, description }) => {
+  const model = `pi/${alias.slice('reviewer-'.length)}`
+  return {
+    model,
     agent: {
-      name: 'reviewer-slow',
-      description: 'Read-only slow-model reviewer',
+      name: alias,
+      description,
       systemPrompt:
         'Review the supplied target independently. Do not edit files or coordinate with other reviewers.',
       tools: ['read', 'grep', 'glob'],
-      model: ['pi/slow'],
+      model: [model],
       source: 'bundled',
     },
-  },
-]
+  }
+})
 
 interface MultiReviewParameters {
   target: string
