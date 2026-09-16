@@ -14,7 +14,7 @@ swarm:
       model: pi/smol
       tools: [read, grep, glob, bash, write, submit_control_decision]
       resume:
-        { id: freeze, contract_version: 6, state_version: 1, policy: strict }
+        { id: freeze, contract_version: 7, state_version: 1, policy: strict }
       control:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/freeze.control.yaml
         allowed_restart_targets: [freeze]
@@ -53,9 +53,13 @@ swarm:
         Missing, malformed, contradictory, blocked or stale input => BLOCKED, never empty
         findings or assumed success. Settlement is not acceptance.
         Post-write validation (required before returning or signaling success): reopen
-        every owned output from disk, not the in-memory object used to write it. Use
-        a one-off Bun command with node:assert/strict; do not add a validator module.
-        For each YAML report, run the equivalent of:
+        every owned output from disk, not the in-memory object used to write it.
+        Correctness/simplicity use only write_review_report for their own YAML report;
+        the tool validates the envelope against freeze and reads it back from disk.
+        Then use read on your saved report and verify all node-specific evidence below.
+        No bash, eval or general write access is permitted for these two reviewers.
+        Other nodes use a one-off Bun command with node:assert/strict; do not add a
+        validator module. For each YAML report, run the equivalent of:
           const assert = require("node:assert/strict");
           const report = Bun.YAML.parse(await Bun.file(reportPath).text());
           assert.equal(report.schema, 1);
@@ -68,7 +72,8 @@ swarm:
         reason, verified-or-null identity and truthful available evidence, never fabricated
         prerequisites. For Markdown, reopen with Bun.file(path).text() and assert.ok/equal
         every labeled schema/producer/status/identity value and required section/evidence.
-        Record the read-back command/result in your final response. Repair only your own
+        Record the read-back command/result (reviewers: tool result and saved-report read)
+        in your final response. Repair only your own
         unpublished output and repeat assertions after repairs; failures prevent success
         and require actionable BLOCKED evidence when possible. Existence is never proof.
         Every invocation rereads current inputs/source; preserve unrelated work, replace
@@ -78,8 +83,11 @@ swarm:
         may repair drafts. Authorized recovery also preserves published review evidence.
         Use only submit_control_decision for signals. Invalid published freeze requires
         an explicit fresh attempt on clean source, never downstream replacement.
-        Before/after each stage and at handoffs inspect HEAD/status/diff, including index
-        and untracked source. Require no staging and HEAD equal the PR head once resolved.
+        Before/after each stage and at handoffs, nodes other than correctness/simplicity
+        inspect HEAD/status/diff, including index and untracked source. Require no staging
+        and HEAD equal the PR head once resolved. Correctness/simplicity instead rely on
+        freeze's validated identity/cleanliness/patch/paths evidence and report-tool validation;
+        they never run Git or shell checks. Adjudicate independently rechecks the current tree.
         Source must be clean through adjudication except attributable restart/recovery
         deltas below; afterward only exact adjudication.owned_paths may differ, consistent
         with accepted fixes/implementation evidence. Read-only stages cannot change project
@@ -96,12 +104,14 @@ swarm:
         During authorized recovery, every stage may inspect the prior adjudication,
         implementation, verification and acceptance reports, and exact archives declared
         by adjudication.recovery, as diagnostics even when BLOCKED, not READY prerequisites.
-        Validate their producers/identity and compare the entire current unstaged source
+        Nodes with bash validate their producers/identity and compare the entire current unstaged source
         delta byte-for-byte with recorded implementation.source_diff (or the older
         verification.evidence.source_diff). Untracked source is forbidden unless its exact
         bytes are independently evidenced; git diff --binary alone cannot establish them;
         missing evidence, staging, unrelated edits even within owned paths, or identity
         drift blocks. Retain only evidenced prior owned_paths; never expand ownership.
+        Correctness/simplicity read frozen and declared recovery evidence only; Git/delta
+        revalidation remains the responsibility of freeze, adjudicate and implementer.
         Freeze/read-only stages rerun by strict resume apply this exception while preserving
         frozen identity/patch/paths and published review evidence byte-for-byte. Reviews
         distinguish frozen PR defects from carried partial fixes; on such reruns validate
@@ -137,11 +147,10 @@ swarm:
         exception: remove that exact self-created root in finally, never pre-existing paths
         or following fixture symlinks. Describe every effect in check expected_result.
         Except for validated published-review reuse during authorized recovery above,
-        correctness and simplicity invoke multi_review exactly once per stage in
-        a dedicated functions.eval call: language: js, timeout: 0 (not null/omitted),
-        await tool.multi_review(...) and display the complete original result. It waits
-        synchronously for all three reviewers; do not mix prerequisites/report writes
-        into this call or validate/write the report before it returns. Target names
+        correctness and simplicity call multi_review DIRECTLY exactly once per stage,
+        never through eval or a shell. Wait for its complete result with all three
+        independent reviewers before validating or writing the report. Preserve the
+        complete original result. Target names
         frozen repository/PR/base/head, R/pr.patch, R/changed-paths.yaml and stage scope.
         acceptanceCriteria carries review criteria and read-only/security/independence
         constraints, not orchestration instructions. Forbid reviewer delegation and
@@ -154,10 +163,11 @@ swarm:
         the common envelope plus reviewers: [{reviewer, alias, completion status, original report}],
         disagreements, coverage, findings: [{id, severity, path, line, claim, evidence,
         proposed_fix, affected_paths, suggested_check, reported_by}]. READY requires all
-        three complete; empty findings still require coverage. Disk read-back must assert
-        unique IDs, all fields, exact evidence, reported_by matching reviewer names, exactly those
-        three reviewers complete for READY, originals equal actual tool reports, preserved
-        disagreements and coverage naming inspected paths/scope.
+        three complete; empty findings still require coverage. After write_review_report
+        succeeds, read your saved report and verify unique IDs, all fields, exact evidence,
+        reported_by matching reviewer names, exactly those three reviewers complete for READY,
+        originals equal actual tool reports, preserved disagreements and coverage naming
+        inspected paths/scope. Tool or saved-report validation failure prevents READY.
       task: |
         Outcome:
         - Freeze OPEN PR __PR_NUMBER__ and gate all source work on a clean, exact checkout.
@@ -178,7 +188,10 @@ swarm:
           Query `gh pr view __PR_NUMBER__ --repo HOST/OWNER/REPO --json number,state,url,baseRefOid,headRefOid`.
           Require matching number, OPEN state, repository URL identity, and
           `git rev-parse HEAD` exactly headRefOid. Require base/head objects locally;
-          do not fetch or checkout. Record their exact OIDs and `git merge-base BASE HEAD`.
+          do not fetch or checkout. Capture full baseRefOid/headRefOid from parsed gh JSON
+          and merge_base from successful git merge-base BASE HEAD stdout into variables.
+          Serialize those command-captured values directly into both YAML identities with
+          Bun.YAML.stringify; never type, abbreviate, slice or transcribe OID literals.
         - On a fresh run require git status --porcelain=v1 --untracked-files=all clean except
           untracked R, runtime state, runner-created signals/tracking/reports/output,
           and exactly .omp-swarm/review-pr-__PR_NUMBER__/workflow.yaml. No other
@@ -189,7 +202,11 @@ swarm:
         Acceptance / verification:
         - Use `git diff --binary MERGE_BASE HEAD` and NUL-delimited name-status
           (including old/new rename paths) to freeze the actual local PR patch/paths.
-          Recheck HEAD/status and read-only PR metadata before publishing READY.
+          Recheck HEAD/status and read-only PR metadata before publishing READY. Compare
+          disk-parsed base/head directly against fresh parsed gh baseRefOid/headRefOid,
+          disk-parsed head against fresh successful git rev-parse HEAD stdout, and merge_base
+          against fresh successful git merge-base stdout using those fresh remote OIDs.
+          Never use manually transcribed literals or the written report as expected authority.
         - Missing objects, auth, ambiguous identity or unowned dirty source => BLOCKED, no edits.
         Outputs / handoffs:
         - Freeze writes R/pr.patch and R/changed-paths.yaml (common envelope with
@@ -214,12 +231,12 @@ swarm:
       type: agent
       role: Independent correctness and security reviewer
       model: pi/smol
-      tools: [read, grep, glob, bash, eval, write, multi_review]
+      tools: [read, grep, glob, multi_review, write_review_report]
       waits_for: [freeze]
       resume:
         {
           id: correctness,
-          contract_version: 9,
+          contract_version: 10,
           state_version: 1,
           policy: strict,
         }
@@ -243,8 +260,9 @@ swarm:
         Acceptance / verification:
         - Support findings with exact path/line, behavior/impact and evidence.
         Outputs / handoffs:
-        - Fresh reviews overwrite R/correctness.yaml for adjudicate/acceptance using the
-          shared schema/read-back assertions; recovery validates it without rewriting.
+        - Fresh reviews call write_review_report to save R/correctness.yaml for
+          adjudicate/acceptance, then read that file and verify shared node-specific evidence;
+          recovery validates the published report without rewriting.
         Control / correction:
         - No control signal; shared BLOCKED rules apply.
         Retry / failure:
@@ -253,12 +271,12 @@ swarm:
       type: agent
       role: Independent simplicity and maintainability reviewer
       model: pi/smol
-      tools: [read, grep, glob, bash, eval, write, multi_review]
+      tools: [read, grep, glob, multi_review, write_review_report]
       waits_for: [freeze]
       resume:
         {
           id: simplicity,
-          contract_version: 9,
+          contract_version: 10,
           state_version: 1,
           policy: strict,
         }
@@ -282,8 +300,9 @@ swarm:
         Acceptance / verification:
         - Show exact locations, existing replacement and preserved observable behavior.
         Outputs / handoffs:
-        - Fresh reviews overwrite R/simplicity.yaml for adjudicate/acceptance using the
-          shared schema/read-back assertions; recovery validates it without rewriting.
+        - Fresh reviews call write_review_report to save R/simplicity.yaml for
+          adjudicate/acceptance, then read that file and verify shared node-specific evidence;
+          recovery validates the published report without rewriting.
         Control / correction:
         - No control signal; shared BLOCKED rules apply.
         Retry / failure:
@@ -297,7 +316,7 @@ swarm:
       resume:
         {
           id: adjudicate,
-          contract_version: 7,
+          contract_version: 8,
           state_version: 1,
           policy: strict,
         }
@@ -327,7 +346,9 @@ swarm:
           archives. No other node owns archive creation; no archive overwrites or cleanup.
         - Tooling files are out of scope: never accept or propose edits to the
           package manifests/lockfiles, CI configuration or task-runner
-          configuration.
+          configuration. SDK/package patches, disabling restrictToolNames, or replacing
+          native createAgentSession with runSubprocess are forbidden fixes. Preserve native
+          restricted sessions, createSubagentSettings approval policy and bounded execution.
         Decision rules:
         - Validate claims, deduplicate and preserve reviewer/model attribution and
           disagreements. Record confirmed, rejected and uncertain findings with reasons;
@@ -353,9 +374,14 @@ swarm:
           cases, to acceptance_cases and check proves. Inspect scripts/imported helpers and
           all setup/output/cleanup effects. Choose focused safe local exact argv/cwd/results;
           no safe meaningful check => BLOCKED with the missing prerequisite.
-        - Execute inspected fixture/setup prerequisites BEFORE publishing the plan, not just
-          syntax checks. Record exact argv/cwd/exit/observed results in prerequisites.
-          Setup failure must be repaired before publication or block; an expected pre-fix
+        - Execute the exact complete published check commands BEFORE publishing the plan,
+          including fixture creation, real operation, assertions and finally cleanup; not
+          isolated setup snippets, syntax checks or mock shape assertions. Every fixture
+          and cleanup variable must be declared in the command's own executable scope;
+          cleanup must run even when a behavioral assertion fails. Assert observable
+          acceptance cases against real code, including applicable negative cases.
+          Record exact argv/cwd/exit/observed results in prerequisites. Setup or cleanup
+          failure must be repaired before publication or block; an expected pre-fix
           behavioral assertion failure is evidence of the defect, not a setup failure.
           Do not demand missing implementation to pass before authorizing its implementer.
           Repair unsafe drafts now; verifier must independently execute, never rewrite them.
@@ -399,7 +425,7 @@ swarm:
       resume:
         {
           id: implementer,
-          contract_version: 6,
+          contract_version: 7,
           state_version: 1,
           policy: strict,
         }
@@ -418,7 +444,9 @@ swarm:
           to pass checks, sibling evidence or runtime state. Never stage or commit.
         - Tooling files remain forbidden even when an accepted finding mentions them:
           do not add, remove or edit task-runner/configuration files such as justfile,
-          package manifests, lockfiles or CI configuration.
+          package manifests, lockfiles or CI configuration. Never patch the SDK/packages,
+          disable restrictToolNames, or replace native createAgentSession with runSubprocess.
+          Preserve createSubagentSettings approval policy and bounded native execution.
         Decision rules:
         - On EVERY invocation, including no accepted fixes/no source edits, independently
           recheck canonical root, anchors, repository/host/OPEN PR/base/head/merge_base via
@@ -458,7 +486,7 @@ swarm:
       tools: [read, grep, glob, bash, write]
       waits_for: [implementer]
       resume:
-        { id: verify, contract_version: 6, state_version: 1, policy: never }
+        { id: verify, contract_version: 7, state_version: 1, policy: never }
       extra_context: *contract
       task: |
         Outcome:
@@ -503,7 +531,7 @@ swarm:
       tools: [read, grep, glob, bash, write, submit_control_decision]
       waits_for: [verify]
       resume:
-        { id: acceptance, contract_version: 6, state_version: 1, policy: never }
+        { id: acceptance, contract_version: 7, state_version: 1, policy: never }
       extra_context: *contract
       control:
         signal: .omp-swarm/review-pr-__PR_NUMBER__/run/acceptance.control.yaml

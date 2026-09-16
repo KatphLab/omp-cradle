@@ -1,11 +1,17 @@
 import {
   createAgentSession,
   SessionManager,
+  type AgentSession,
   type CreateAgentSessionOptions,
   type CustomTool,
 } from '@oh-my-pi/pi-coding-agent'
 import type { ModelRegistry } from '@oh-my-pi/pi-coding-agent/config/model-registry'
-import type { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
+import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
+import {
+  buildBudgetNotice,
+  createSubagentSettings,
+  resolveSoftRequestBudget,
+} from '@oh-my-pi/pi-coding-agent/task/executor'
 import type {
   AgentProgress,
   SingleResult,
@@ -13,6 +19,7 @@ import type {
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { createMultiReviewTool } from '../../multi-review'
+import { createReviewReportTool } from '../review-report-tool'
 import { createSwarmSignalTools } from '../signal-tools'
 import type { SwarmAgent } from './schema'
 import {
@@ -89,6 +96,9 @@ function buildSessionOptions(
       tools,
       options.signalToolContext,
       options.modelOverride,
+      options.workspace,
+      options.swarmName,
+      agent.name,
     ),
     enableLsp: false,
     enableMCP: false,
@@ -104,7 +114,6 @@ function buildSessionOptions(
     ...(options.modelRegistry === undefined
       ? {}
       : { modelRegistry: options.modelRegistry }),
-    ...(options.settings === undefined ? {} : { settings: options.settings }),
   }
 }
 
@@ -120,6 +129,10 @@ async function runSession(
   const { session } = await createAgentSession({
     ...buildSessionOptions(agent, options),
     sessionManager,
+    settings: createSubagentSettings(
+      options.settings ??
+        (await Settings.loadReadOnly({ cwd: options.workspace })),
+    ),
     agentId: sessionManager.getSessionId(),
   })
   const started = Date.now()
@@ -151,14 +164,12 @@ async function runSession(
     progress.durationMs = Date.now() - started
     options.onProgress?.(agent.name, { ...progress })
   })
-  const abort = () => {
-    session.agent.abort()
-  }
-  options.signal?.addEventListener('abort', abort, { once: true })
+  const limits = monitorSession(session, agent.name, options.signal)
   try {
     options.signal?.throwIfAborted()
-    await session.prompt(agent.task)
-    options.signal?.throwIfAborted()
+    if (!(await session.prompt(agent.task)))
+      throw new Error('Swarm agent prompt did not execute')
+    limits.signal.throwIfAborted()
     const outputPath = path.join(directory, `${id}.md`)
     await fs.mkdir(directory, { recursive: true })
     await fs.writeFile(outputPath, output)
@@ -173,7 +184,7 @@ async function runSession(
       ...(error === undefined ? {} : { error }),
     }
   } finally {
-    options.signal?.removeEventListener('abort', abort)
+    limits.dispose()
     unsubscribe()
     await session.dispose()
   }
@@ -248,6 +259,9 @@ function buildCustomTools(
   tools: string[] | undefined,
   signalToolContext: SwarmSignalToolContext | undefined,
   modelOverride: string | undefined,
+  workspace: string,
+  swarmName: string,
+  agentName: string,
 ): CustomTool[] {
   const customTools: CustomTool[] = []
   if (signalToolContext !== undefined) {
@@ -261,6 +275,8 @@ function buildCustomTools(
   }
   if (tools?.includes('multi_review'))
     customTools.push(createMultiReviewTool(modelOverride))
+  if (tools?.includes('write_review_report'))
+    customTools.push(createReviewReportTool(workspace, swarmName, agentName))
   return customTools
 }
 
@@ -319,4 +335,68 @@ function buildSystemPrompt(agent: SwarmAgent): string {
     parts.push(agent.extraContext)
   }
   return parts.join('\n\n')
+}
+
+function monitorSession(
+  session: AgentSession,
+  agentName: string,
+  parent: AbortSignal | undefined,
+) {
+  const controller = new AbortController()
+  const stop = (reason: string) => {
+    controller.abort(new Error(reason))
+  }
+  const abort = () => {
+    session.agent.abort()
+  }
+  const parentAbort = () => {
+    stop('Swarm agent was cancelled')
+  }
+  controller.signal.addEventListener('abort', abort, { once: true })
+  parent?.addEventListener('abort', parentAbort, { once: true })
+  if (parent?.aborted) parentAbort()
+  const runtime = session.settings.get('task.maxRuntimeMs')
+  const timer =
+    runtime > 0
+      ? setTimeout(() => {
+          stop('Swarm agent runtime limit exceeded')
+        }, runtime)
+      : undefined
+  const budget = resolveSoftRequestBudget(
+    agentName,
+    session.settings.get('task.softRequestBudget'),
+  )
+  let requests = 0
+  const unsubscribe = session.subscribe((event) => {
+    if (
+      event.type !== 'message_end' ||
+      event.message.role !== 'assistant' ||
+      budget === 0
+    )
+      return
+    requests++
+    if (requests >= Math.ceil(budget * 1.5))
+      stop('Swarm agent request budget exceeded')
+    else if (
+      requests === budget &&
+      session.settings.get('task.softRequestBudgetNotice')
+    ) {
+      void session
+        .sendUserMessage(buildBudgetNotice(requests, budget), {
+          deliverAs: 'steer',
+        })
+        .catch(() => {
+          stop('Could not deliver swarm request budget notice')
+        })
+    }
+  })
+  return {
+    signal: controller.signal,
+    dispose() {
+      clearTimeout(timer)
+      unsubscribe()
+      parent?.removeEventListener('abort', parentAbort)
+      controller.signal.removeEventListener('abort', abort)
+    },
+  }
 }

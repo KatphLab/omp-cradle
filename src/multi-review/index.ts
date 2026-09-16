@@ -3,7 +3,10 @@ import type {
   CustomToolContext,
   ExtensionAPI,
 } from '@oh-my-pi/pi-coding-agent'
-import { resolveModelOverride } from '@oh-my-pi/pi-coding-agent/config/model-resolver'
+import {
+  formatModelSelectorValue,
+  resolveModelOverride,
+} from '@oh-my-pi/pi-coding-agent/config/model-resolver'
 import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import {
   runSubprocess,
@@ -89,7 +92,10 @@ interface ReviewerModel {
 interface ResolvedReviewer {
   agent: AgentDefinition
   alias: string
-  resolved: { model?: ReviewerModel; thinkingLevel?: string }
+  resolved: {
+    model?: ReviewerModel
+    thinkingLevel?: Parameters<typeof formatModelSelectorValue>[1]
+  }
 }
 
 function reviewerStatus(
@@ -102,10 +108,12 @@ function reviewerStatus(
 
 function reviewerModelSelector(
   result: ReviewerModel,
-  thinkingLevel: string | undefined,
+  thinkingLevel: Parameters<typeof formatModelSelectorValue>[1],
 ): string {
-  const suffix = thinkingLevel === undefined ? '' : `:${thinkingLevel}`
-  return `${result.provider}/${result.id}${suffix}`
+  return formatModelSelectorValue(
+    `${result.provider}/${result.id}`,
+    thinkingLevel,
+  )
 }
 
 function buildReviewersReport(
