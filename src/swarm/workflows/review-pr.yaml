@@ -147,15 +147,15 @@ swarm:
         constraints, not orchestration instructions. Forbid reviewer delegation and
         multi_review calls; reviewers return findings only. Context contains factual
         evidence paths, never your conclusions or the other stage's report. Require
-        reviewer-smol (pi/smol), reviewer-default (pi/default), reviewer-slow (pi/slow).
+        reviewer-smol, reviewer-default and reviewer-slow, all using pi/smol.
         Unavailable tool or failed/aborted/missing reviewer => BLOCKED with actionable
         tool/model diagnostics, never single-agent fallback. Preserve originals,
         attribution and disagreement; validate concrete evidence. Both review YAMLs use
-        the common envelope plus reviewers: [{alias, completion status, original report}],
+        the common envelope plus reviewers: [{reviewer, alias, completion status, original report}],
         disagreements, coverage, findings: [{id, severity, path, line, claim, evidence,
         proposed_fix, affected_paths, suggested_check, reported_by}]. READY requires all
         three complete; empty findings still require coverage. Disk read-back must assert
-        unique IDs, all fields, exact evidence, reported_by matching aliases, exactly those
+        unique IDs, all fields, exact evidence, reported_by matching reviewer names, exactly those
         three reviewers complete for READY, originals equal actual tool reports, preserved
         disagreements and coverage naming inspected paths/scope.
       task: |
@@ -219,7 +219,7 @@ swarm:
       resume:
         {
           id: correctness,
-          contract_version: 8,
+          contract_version: 9,
           state_version: 1,
           policy: strict,
         }
@@ -258,7 +258,7 @@ swarm:
       resume:
         {
           id: simplicity,
-          contract_version: 8,
+          contract_version: 9,
           state_version: 1,
           policy: strict,
         }

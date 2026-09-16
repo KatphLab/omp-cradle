@@ -1,18 +1,16 @@
-/**
- * Swarm agent execution via oh-my-pi's subagent infrastructure.
- */
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import {
+  createAgentSession,
+  SessionManager,
+  type CreateAgentSessionOptions,
+  type CustomTool,
+} from '@oh-my-pi/pi-coding-agent'
 import type { ModelRegistry } from '@oh-my-pi/pi-coding-agent/config/model-registry'
 import type { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
-import {
-  runSubprocess,
-  type ExecutorOptions,
-} from '@oh-my-pi/pi-coding-agent/task/executor'
 import type {
-  AgentDefinition,
   AgentProgress,
   SingleResult,
 } from '@oh-my-pi/pi-coding-agent/task/types'
+import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { createMultiReviewTool } from '../../multi-review'
 import { createSwarmSignalTools } from '../signal-tools'
@@ -45,24 +43,16 @@ export async function executeSwarmAgent(
   options: SwarmExecutorOptions,
 ): Promise<SingleResult> {
   const runId = buildRunId(agent, options)
-  if (options.signalToolContext !== undefined) {
-    await writeSignalToolContext(
-      options.stateTracker.swarmDir,
-      runId,
-      options.signalToolContext,
-    )
-  }
   await markAgentStarted(agent, options)
 
   try {
-    const result = await runSubprocess(
-      buildExecutorOptions(agent, index, options),
-    )
+    const result = await runSession(agent, index, runId, options)
     await recordAgentResult(agent, result, options)
     return result
   } catch (error_) {
-    await recordAgentError(agent, error_, options)
-    throw error_
+    const error = error_ instanceof Error ? error_ : new Error(String(error_))
+    await recordAgentError(agent, error, options)
+    throw error
   }
 }
 
@@ -84,76 +74,147 @@ async function markAgentStarted(
   )
 }
 
-function buildExecutorOptions(
+function buildSessionOptions(
   agent: SwarmAgent,
-  index: number,
   options: SwarmExecutorOptions,
-): ExecutorOptions {
-  const agentDefinition = buildAgentDefinition(agent, options.signalToolContext)
-  const customTools = buildCustomTools(
-    agentDefinition.tools,
-    options.signalToolContext,
-  )
-  const restrictToolNames = agentDefinition.tools !== undefined
-  const executorOptions: ExecutorOptions = {
+): CreateAgentSessionOptions {
+  const tools = buildAgentTools(agent.tools, options.signalToolContext)
+  return {
     cwd: options.workspace,
-    agent: agentDefinition,
-    task: agent.task,
-    index,
-    id: buildRunId(agent, options),
-    onProgress: (progress) => {
-      if (
-        progress.resolvedModel !== undefined &&
-        options.stateTracker.state.agents[agent.name]?.resolvedModel !==
-          progress.resolvedModel
-      ) {
-        void options.stateTracker
-          .updateAgent(agent.name, { resolvedModel: progress.resolvedModel })
-          .catch(ignoreProgressPersistenceError)
-      }
-      options.onProgress?.(agent.name, progress)
-    },
+    appendSystemPrompt: buildSystemPrompt(agent),
+    ...(tools === undefined ? {} : { toolNames: tools }),
+    restrictToolNames: tools !== undefined,
+    allowRestrictedCustomTools: true,
+    customTools: buildCustomTools(
+      tools,
+      options.signalToolContext,
+      options.modelOverride,
+    ),
     enableLsp: false,
     enableMCP: false,
     enableIrc: false,
-    restrictToolNames,
-    ...(restrictToolNames && customTools.length > 0
-      ? { allowRestrictedCustomTools: true }
-      : {}),
-    extensionRoots: () => ({
-      explicit: [],
-      mode: 'explicit-only' as const,
-      configured: [],
-      configuredLevel: 'project' as const,
-    }),
-    preloadedExtensionPaths: [],
-    preloadedPreparedExtensions: [],
-    preloadedCustomToolPaths: [],
-    ...(customTools.length === 0 ? {} : { customTools }),
-    artifactsDir: path.join(options.stateTracker.swarmDir, 'context'),
+    disableExtensionDiscovery: true,
+    spawns: '',
+    ...(options.modelOverride === undefined
+      ? {}
+      : { modelPattern: options.modelOverride }),
+    ...(options.modelRegistry === undefined
+      ? {}
+      : { modelRegistry: options.modelRegistry }),
+    ...(options.settings === undefined ? {} : { settings: options.settings }),
   }
-  if (options.modelOverride !== undefined)
-    executorOptions.modelOverride = options.modelOverride
-  if (options.signal !== undefined) executorOptions.signal = options.signal
-  if (options.modelRegistry !== undefined)
-    executorOptions.modelRegistry = options.modelRegistry
-  if (options.settings !== undefined)
-    executorOptions.settings = options.settings
-  return executorOptions
 }
 
-function buildAgentDefinition(
+async function runSession(
   agent: SwarmAgent,
-  signalToolContext: SwarmSignalToolContext | undefined,
-): AgentDefinition {
-  const tools = buildAgentTools(agent.tools, signalToolContext)
-  return {
-    name: agent.name,
-    description: `Swarm agent: ${agent.role}`,
-    systemPrompt: buildSystemPrompt(agent),
-    source: 'project',
-    ...(tools === undefined ? {} : { tools }),
+  index: number,
+  id: string,
+  options: SwarmExecutorOptions,
+): Promise<SingleResult> {
+  options.signal?.throwIfAborted()
+  const directory = path.join(options.stateTracker.swarmDir, 'context')
+  const sessionManager = await createSessionManager(options)
+  const { session } = await createAgentSession({
+    ...buildSessionOptions(agent, options),
+    sessionManager,
+  })
+  const started = Date.now()
+  const progress = initialProgress(agent, index, id)
+  let output = ''
+  let error: string | undefined
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === 'tool_execution_start') {
+      progress.toolCount++
+      progress.currentTool = event.toolName
+    }
+    if (event.type === 'message_end' && event.message.role === 'assistant') {
+      const message = event.message
+      progress.requests++
+      progress.tokens +=
+        message.usage.input + message.usage.output + message.usage.cacheWrite
+      progress.cost += message.usage.cost.total
+      output = message.content
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n')
+      error =
+        message.stopReason === 'error' || message.stopReason === 'aborted'
+          ? (message.errorMessage ?? `Agent ${message.stopReason}`)
+          : undefined
+    }
+    if (session.model !== undefined)
+      progress.resolvedModel = `${session.model.provider}/${session.model.id}`
+    progress.durationMs = Date.now() - started
+    options.onProgress?.(agent.name, { ...progress })
+  })
+  const abort = () => {
+    session.agent.abort()
   }
+  options.signal?.addEventListener('abort', abort, { once: true })
+  try {
+    options.signal?.throwIfAborted()
+    await session.prompt(agent.task)
+    options.signal?.throwIfAborted()
+    const outputPath = path.join(directory, `${id}.md`)
+    await fs.mkdir(directory, { recursive: true })
+    await fs.writeFile(outputPath, output)
+    return {
+      ...progress,
+      durationMs: Date.now() - started,
+      output,
+      outputPath,
+      exitCode: error === undefined ? 0 : 1,
+      stderr: error ?? '',
+      truncated: false,
+      ...(error === undefined ? {} : { error }),
+    }
+  } finally {
+    options.signal?.removeEventListener('abort', abort)
+    unsubscribe()
+    await session.dispose()
+  }
+}
+
+function initialProgress(
+  agent: SwarmAgent,
+  index: number,
+  id: string,
+): AgentProgress {
+  return {
+    index,
+    id,
+    agent: agent.name,
+    agentSource: 'project',
+    task: agent.task,
+    status: 'running',
+    recentTools: [],
+    recentOutput: [],
+    toolCount: 0,
+    requests: 0,
+    tokens: 0,
+    cost: 0,
+    durationMs: 0,
+  }
+}
+
+async function createSessionManager(
+  options: SwarmExecutorOptions,
+): Promise<SessionManager> {
+  const sessionManager = SessionManager.create(
+    options.workspace,
+    path.join(options.stateTracker.swarmDir, 'context'),
+  )
+  const sessionFile = sessionManager.getSessionFile()
+  if (sessionFile === undefined)
+    throw new Error('Swarm session persistence is unavailable')
+  if (options.signalToolContext !== undefined) {
+    await writeSignalToolContext(
+      options.stateTracker.swarmDir,
+      path.basename(sessionFile, '.jsonl'),
+      options.signalToolContext,
+    )
+  }
+  return sessionManager
 }
 
 function buildAgentTools(
@@ -182,6 +243,7 @@ function buildAgentTools(
 function buildCustomTools(
   tools: string[] | undefined,
   signalToolContext: SwarmSignalToolContext | undefined,
+  modelOverride: string | undefined,
 ): CustomTool[] {
   const customTools: CustomTool[] = []
   if (signalToolContext !== undefined) {
@@ -193,7 +255,8 @@ function buildCustomTools(
       if (applicable) customTools.push(signalTool)
     }
   }
-  if (tools?.includes('multi_review')) customTools.push(createMultiReviewTool())
+  if (tools?.includes('multi_review'))
+    customTools.push(createMultiReviewTool(modelOverride))
   return customTools
 }
 
@@ -227,10 +290,6 @@ async function recordAgentResult(
     agent.name,
     `Iteration ${options.iteration} attempt ${options.attempt} ${status}${errorSuffix}`,
   )
-}
-
-function ignoreProgressPersistenceError(error: unknown): void {
-  if (error instanceof Error) return
 }
 
 async function recordAgentError(

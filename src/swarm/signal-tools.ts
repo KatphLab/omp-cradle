@@ -307,7 +307,9 @@ function createControlSignalTool(submitted: Set<string>): CustomTool {
   return {
     name: 'submit_control_decision',
     label: 'Submit Swarm Control Decision',
-    description: 'Submit the current swarm control decision.',
+    strict: false,
+    description:
+      'Submit a continue, restart, or fail decision. Omit scope when only one channel exists; do not invent scope. target is only for restart. reason is required for restart and fail.',
     parameters: {
       type: 'object',
       properties: {
@@ -337,6 +339,7 @@ function createRepeatSignalTool(submitted: Set<string>): CustomTool {
   return {
     name: 'submit_repeat_decision',
     label: 'Submit Swarm Repeat Decision',
+    strict: false,
     description: 'Submit the current repeated swarm graph decision.',
     parameters: {
       type: 'object',

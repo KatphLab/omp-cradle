@@ -18,7 +18,6 @@ import { randomUUID } from 'node:crypto'
 const synthesisInstructions =
   'Synthesize these independent results: deduplicate findings, preserve disagreements, ' +
   'and attribute each finding to its reviewer and model alias. ' +
-  'reviewer-smol = pi/smol; reviewer-default = pi/default; reviewer-slow = pi/slow. ' +
   'Report failed or aborted reviewers as incomplete coverage, not as no findings.'
 
 const reviewerDefinitions: readonly {
@@ -140,20 +139,34 @@ function buildReviewersReport(
     }
   })
 }
+function reviewAssignment(params: MultiReviewParameters): string {
+  return [
+    `Review target:\n${params.target}`,
+    `Acceptance criteria:\n${params.acceptanceCriteria}`,
+    'Review independently. Do not edit files or coordinate with other reviewers.',
+    'Return findings ordered by severity with exact locations and evidence; explicitly say if there are none.',
+  ].join('\n\n')
+}
+
 async function executeMultiReview(
   params: MultiReviewParameters,
   signal: AbortSignal | undefined,
   cwd: string,
   settings: CustomToolContext['settings'],
   modelRegistry: CustomToolContext['modelRegistry'],
+  modelOverride?: string,
 ) {
   signal?.throwIfAborted()
   settings ??= await Settings.loadReadOnly({ cwd })
   const reviewers: ResolvedReviewer[] = reviewerDefinitions.map(
     ({ agent, model }) => ({
       agent,
-      alias: model,
-      resolved: resolveModelOverride([model], modelRegistry, settings),
+      alias: modelOverride ?? model,
+      resolved: resolveModelOverride(
+        [modelOverride ?? model],
+        modelRegistry,
+        settings,
+      ),
     }),
   )
   const unavailable = reviewers.filter(
@@ -171,12 +184,7 @@ async function executeMultiReview(
     }
   }
   const invocationId = randomUUID()
-  const assignment = [
-    `Review target:\n${params.target}`,
-    `Acceptance criteria:\n${params.acceptanceCriteria}`,
-    'Review independently. Do not edit files or coordinate with other reviewers.',
-    'Return findings ordered by severity with exact locations and evidence; explicitly say if there are none.',
-  ].join('\n\n')
+  const assignment = reviewAssignment(params)
   const results = await Promise.all(
     reviewers.map(({ agent, alias, resolved }, index) => {
       const resolvedModel = resolved.model
@@ -219,12 +227,11 @@ async function executeMultiReview(
   }
 }
 
-export function createMultiReviewTool(): CustomTool {
+export function createMultiReviewTool(modelOverride?: string): CustomTool {
   return {
     name: 'multi_review',
     label: 'Multi Review',
-    description:
-      'Run three independent read-only reviewers using smol, default, and slow models.',
+    description: `Run three independent read-only reviewers using ${modelOverride ?? 'smol, default, and slow'} models.`,
     parameters: {
       type: 'object',
       properties: {
@@ -243,6 +250,7 @@ export function createMultiReviewTool(): CustomTool {
           ctx.sessionManager.getCwd(),
           ctx.settings,
           ctx.modelRegistry,
+          modelOverride,
         )
       } catch (error: unknown) {
         throw new Error(
