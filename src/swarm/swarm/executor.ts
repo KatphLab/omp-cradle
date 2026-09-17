@@ -1,3 +1,4 @@
+import type { AssistantMessage } from '@oh-my-pi/pi-ai'
 import {
   createAgentSession,
   SessionManager,
@@ -7,6 +8,7 @@ import {
 } from '@oh-my-pi/pi-coding-agent'
 import type { ModelRegistry } from '@oh-my-pi/pi-coding-agent/config/model-registry'
 import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
+import type { AgentSessionEvent } from '@oh-my-pi/pi-coding-agent/session/agent-session-events'
 import {
   buildBudgetNotice,
   createSubagentSettings,
@@ -16,6 +18,7 @@ import type {
   AgentProgress,
   SingleResult,
 } from '@oh-my-pi/pi-coding-agent/task/types'
+import { buildNamedToolChoice } from '@oh-my-pi/pi-coding-agent/utils/tool-choice'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { createMultiReviewTool } from '../../multi-review'
@@ -29,6 +32,12 @@ import {
   type SwarmSignalToolContext,
 } from './signal-tool-context'
 import type { StateTracker } from './state'
+
+const noop = (): void => undefined
+
+function ignoreError(): void {
+  return undefined
+}
 
 export interface SwarmExecutorOptions {
   workspace: string
@@ -84,6 +93,7 @@ async function markAgentStarted(
 function buildSessionOptions(
   agent: SwarmAgent,
   options: SwarmExecutorOptions,
+  settings: Settings,
 ): CreateAgentSessionOptions {
   const tools = buildAgentTools(agent.tools, options.signalToolContext)
   return {
@@ -92,6 +102,7 @@ function buildSessionOptions(
     ...(tools === undefined ? {} : { toolNames: tools }),
     restrictToolNames: tools !== undefined,
     allowRestrictedCustomTools: true,
+    requireYieldTool: true,
     customTools: buildCustomTools(
       tools,
       options.signalToolContext,
@@ -108,6 +119,7 @@ function buildSessionOptions(
     taskDepth: 1,
     agentName: agent.name,
     agentDisplayName: agent.name,
+    settings,
     ...(options.modelOverride === undefined
       ? {}
       : { modelPattern: options.modelOverride }),
@@ -117,77 +129,249 @@ function buildSessionOptions(
   }
 }
 
+async function awaitAbortable<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  signal.throwIfAborted()
+  const { promise: abortPromise, reject } = Promise.withResolvers<never>()
+  const onAbort = (): void => {
+    reject(signal.reason)
+  }
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    return await Promise.race([promise, abortPromise])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
 async function runSession(
   agent: SwarmAgent,
   index: number,
   id: string,
   options: SwarmExecutorOptions,
 ): Promise<SingleResult> {
-  options.signal?.throwIfAborted()
   const directory = path.join(options.stateTracker.swarmDir, 'context')
-  const sessionManager = await createSessionManager(options)
-  const { session } = await createAgentSession({
-    ...buildSessionOptions(agent, options),
+  const settings = createSubagentSettings(
+    options.settings ??
+      (await Settings.loadReadOnly({ cwd: options.workspace })),
+  )
+  const limits = monitorSession(
+    agent.name,
+    options.signal,
+    settings.get('task.maxRuntimeMs'),
+    settings.get('task.softRequestBudget'),
+    settings.get('task.softRequestBudgetNotice'),
+  )
+  try {
+    const session = await createAgentSessionWithLimits(
+      agent,
+      options,
+      settings,
+      limits.signal,
+    )
+    const started = Date.now()
+    const progress = initialProgress(agent, index, id)
+    const state: SessionResultState = {
+      output: '',
+      error: undefined,
+      stopReason: undefined,
+      yielded: false,
+    }
+    limits.attach(session)
+    const unsubscribe = subscribeSession(
+      session,
+      agent,
+      options,
+      progress,
+      state,
+      started,
+    )
+    try {
+      await driveSession(session, agent.task, state, limits)
+      return await persistSessionResult(
+        directory,
+        id,
+        progress,
+        state,
+        started,
+        limits.signal,
+      )
+    } finally {
+      unsubscribe()
+      await session.dispose()
+    }
+  } finally {
+    limits.dispose()
+  }
+}
+
+interface SessionResultState {
+  output: string
+  error: string | undefined
+  stopReason: string | undefined
+  yielded: boolean
+}
+interface SessionMonitor {
+  signal: AbortSignal
+  attach(session: AgentSession): void
+  budgetStopRequested(): boolean
+  waitForBudgetStop(): Promise<void>
+  dispose(): void
+}
+
+async function createAgentSessionWithLimits(
+  agent: SwarmAgent,
+  options: SwarmExecutorOptions,
+  settings: Settings,
+  signal: AbortSignal,
+): Promise<AgentSession> {
+  const sessionManagerPromise = createSessionManager(options)
+  let sessionManager: SessionManager
+  try {
+    sessionManager = await awaitAbortable(sessionManagerPromise, signal)
+  } catch (error_) {
+    void sessionManagerPromise.catch(ignoreError)
+    throw error_
+  }
+
+  const sessionPromise = createAgentSession({
+    ...buildSessionOptions(agent, options, settings),
     sessionManager,
-    settings: createSubagentSettings(
-      options.settings ??
-        (await Settings.loadReadOnly({ cwd: options.workspace })),
-    ),
     agentId: sessionManager.getSessionId(),
   })
-  const started = Date.now()
-  const progress = initialProgress(agent, index, id)
-  let output = ''
-  let error: string | undefined
-  const unsubscribe = session.subscribe((event) => {
-    if (event.type === 'tool_execution_start') {
-      progress.toolCount++
-      progress.currentTool = event.toolName
-    }
-    if (event.type === 'message_end' && event.message.role === 'assistant') {
-      const message = event.message
-      progress.requests++
-      progress.tokens +=
-        message.usage.input + message.usage.output + message.usage.cacheWrite
-      progress.cost += message.usage.cost.total
-      output = message.content
-        .filter((block) => block.type === 'text')
-        .map((block) => block.text)
-        .join('\n')
-      error =
-        message.stopReason === 'error' || message.stopReason === 'aborted'
-          ? (message.errorMessage ?? `Agent ${message.stopReason}`)
-          : undefined
-    }
+  try {
+    const { session } = await awaitAbortable(sessionPromise, signal)
+    return session
+  } catch (error_) {
+    void sessionPromise
+      .then(({ session: lateSession }) => lateSession.dispose())
+      .catch(ignoreError)
+    throw error_
+  }
+}
+
+function subscribeSession(
+  session: AgentSession,
+  agent: SwarmAgent,
+  options: SwarmExecutorOptions,
+  progress: AgentProgress,
+  state: SessionResultState,
+  started: number,
+): () => void {
+  return session.subscribe((event) => {
+    if (event.type === 'message_end' && event.message.role === 'assistant')
+      updateAssistantResult(event.message, progress, state)
+    if (isSuccessfulYieldEvent(event)) state.yielded = true
     if (session.model !== undefined)
       progress.resolvedModel = `${session.model.provider}/${session.model.id}`
     progress.durationMs = Date.now() - started
     options.onProgress?.(agent.name, { ...progress })
   })
-  const limits = monitorSession(session, agent.name, options.signal)
+}
+
+function updateAssistantResult(
+  message: AssistantMessage,
+  progress: AgentProgress,
+  state: SessionResultState,
+): void {
+  progress.requests++
+  progress.tokens +=
+    message.usage.input + message.usage.output + message.usage.cacheWrite
+  progress.cost += message.usage.cost.total
+  const text = message.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+  if (text.length > 0)
+    state.output += state.output.length > 0 ? `\n${text}` : text
+  state.stopReason = message.stopReason
+  state.error =
+    message.stopReason === 'error' || message.stopReason === 'aborted'
+      ? (message.errorMessage ?? `Agent ${message.stopReason}`)
+      : undefined
+}
+
+function isSuccessfulYieldEvent(event: AgentSessionEvent): boolean {
+  if (
+    event.type !== 'tool_execution_end' ||
+    event.toolName !== 'yield' ||
+    event.isError
+  )
+    return false
+  const result: unknown = event.result
+  if (typeof result !== 'object' || result === null || !('details' in result))
+    return false
+  const details = result.details
+  return (
+    typeof details === 'object' &&
+    details !== null &&
+    'status' in details &&
+    details.status === 'success'
+  )
+}
+
+async function driveSession(
+  session: AgentSession,
+  task: string,
+  state: SessionResultState,
+  limits: SessionMonitor,
+): Promise<void> {
+  limits.signal.throwIfAborted()
   try {
-    options.signal?.throwIfAborted()
-    if (!(await session.prompt(agent.task)))
-      throw new Error('Swarm agent prompt did not execute')
-    limits.signal.throwIfAborted()
-    const outputPath = path.join(directory, `${id}.md`)
-    await fs.mkdir(directory, { recursive: true })
-    await fs.writeFile(outputPath, output)
-    return {
-      ...progress,
-      durationMs: Date.now() - started,
-      output,
-      outputPath,
-      exitCode: error === undefined ? 0 : 1,
-      stderr: error ?? '',
-      truncated: false,
-      ...(error === undefined ? {} : { error }),
-    }
-  } finally {
-    limits.dispose()
-    unsubscribe()
-    await session.dispose()
+    await awaitAbortable(session.prompt(task), limits.signal)
+    await awaitAbortable(session.waitForIdle(), limits.signal)
+  } catch (error_) {
+    if (!limits.budgetStopRequested()) throw error_
   }
+
+  await limits.waitForBudgetStop()
+  if (!limits.budgetStopRequested()) return
+  limits.signal.throwIfAborted()
+  if (state.yielded) return
+
+  const forcedYield = buildNamedToolChoice('yield', session.model)
+  await awaitAbortable(
+    session.prompt(
+      'Your request budget was reached. Stop investigating and yield your final report now.',
+      {
+        synthetic: true,
+        ...(forcedYield === undefined ? {} : { toolChoice: forcedYield }),
+      },
+    ),
+    limits.signal,
+  )
+  await awaitAbortable(session.waitForIdle(), limits.signal)
+}
+
+async function persistSessionResult(
+  directory: string,
+  id: string,
+  progress: AgentProgress,
+  state: SessionResultState,
+  started: number,
+  signal: AbortSignal,
+): Promise<SingleResult> {
+  if (!state.yielded)
+    state.error ??=
+      state.stopReason === 'length'
+        ? 'Swarm agent reached the response length limit before yielding'
+        : 'Swarm agent did not call yield'
+  const outputPath = path.join(directory, `${id}.md`)
+  await fs.mkdir(directory, { recursive: true })
+  await fs.writeFile(outputPath, state.output)
+  signal.throwIfAborted()
+  const result = {
+    ...progress,
+    durationMs: Date.now() - started,
+    output: state.output,
+    outputPath,
+    exitCode: state.yielded ? 0 : 1,
+    stderr: state.error ?? '',
+    truncated: false,
+  }
+  return state.error === undefined ? result : { ...result, error: state.error }
 }
 
 function initialProgress(
@@ -337,66 +521,133 @@ function buildSystemPrompt(agent: SwarmAgent): string {
   return parts.join('\n\n')
 }
 
-function monitorSession(
+interface BudgetMonitorState {
+  budget: number
+  stopThreshold: number
+  requests: number
+  stopped: boolean
+  abortPromise: Promise<void> | undefined
+}
+
+function getAssistantMessage(
+  event: AgentSessionEvent,
+): AssistantMessage | undefined {
+  if (event.type !== 'message_end' || event.message.role !== 'assistant')
+    return undefined
+  return event.message
+}
+
+function handleBudgetMessage(
   session: AgentSession,
+  message: AssistantMessage,
+  state: BudgetMonitorState,
+  budgetNotice: boolean,
+  abortSession: () => Promise<void>,
+  hardAbort: (reason: string) => void,
+): void {
+  state.requests++
+  if (
+    state.budget === 0 ||
+    message.content.some(
+      (block) => block.type === 'toolCall' && block.name === 'yield',
+    )
+  )
+    return
+  if (state.stopped) {
+    if (state.requests >= state.stopThreshold + 5)
+      hardAbort('Swarm agent request budget exceeded')
+    return
+  }
+  if (state.requests >= state.stopThreshold) {
+    state.stopped = true
+    state.abortPromise = abortSession()
+    return
+  }
+  if (state.requests === state.budget && budgetNotice)
+    void session
+      .sendUserMessage(buildBudgetNotice(state.requests, state.budget), {
+        deliverAs: 'steer',
+      })
+      .catch(ignoreError)
+}
+
+function monitorSession(
   agentName: string,
   parent: AbortSignal | undefined,
-) {
+  runtimeValue: number,
+  budgetValue: number,
+  budgetNotice: boolean,
+): SessionMonitor {
   const controller = new AbortController()
-  const stop = (reason: string) => {
+  const state: BudgetMonitorState = {
+    budget: resolveSoftRequestBudget(
+      agentName,
+      Math.max(0, Math.trunc(budgetValue || 0)),
+    ),
+    stopThreshold: 0,
+    requests: 0,
+    stopped: false,
+    abortPromise: undefined,
+  }
+  state.stopThreshold = Math.ceil(state.budget * 1.5)
+  let activeSession: AgentSession | undefined
+  let unsubscribe = noop
+  const abortSession = (): Promise<void> =>
+    activeSession?.abort().catch(ignoreError) ?? Promise.resolve()
+  const hardAbort = (reason: string): void => {
+    if (controller.signal.aborted) return
     controller.abort(new Error(reason))
+    void abortSession()
   }
-  const abort = () => {
-    session.agent.abort()
+  const parentAbort = (): void => {
+    hardAbort('Swarm agent was cancelled')
   }
-  const parentAbort = () => {
-    stop('Swarm agent was cancelled')
+  const onAbort = (): void => {
+    void abortSession()
   }
-  controller.signal.addEventListener('abort', abort, { once: true })
+  controller.signal.addEventListener('abort', onAbort, { once: true })
   parent?.addEventListener('abort', parentAbort, { once: true })
   if (parent?.aborted) parentAbort()
-  const runtime = session.settings.get('task.maxRuntimeMs')
+  const runtime = Math.max(0, Math.trunc(runtimeValue || 0))
   const timer =
     runtime > 0
       ? setTimeout(() => {
-          stop('Swarm agent runtime limit exceeded')
+          hardAbort('Swarm agent runtime limit exceeded')
         }, runtime)
       : undefined
-  const budget = resolveSoftRequestBudget(
-    agentName,
-    session.settings.get('task.softRequestBudget'),
-  )
-  let requests = 0
-  const unsubscribe = session.subscribe((event) => {
-    if (
-      event.type !== 'message_end' ||
-      event.message.role !== 'assistant' ||
-      budget === 0
-    )
-      return
-    requests++
-    if (requests >= Math.ceil(budget * 1.5))
-      stop('Swarm agent request budget exceeded')
-    else if (
-      requests === budget &&
-      session.settings.get('task.softRequestBudgetNotice')
-    ) {
-      void session
-        .sendUserMessage(buildBudgetNotice(requests, budget), {
-          deliverAs: 'steer',
-        })
-        .catch(() => {
-          stop('Could not deliver swarm request budget notice')
-        })
-    }
-  })
+
   return {
     signal: controller.signal,
-    dispose() {
+    attach(session: AgentSession): void {
+      activeSession = session
+      if (controller.signal.aborted) {
+        void abortSession()
+        return
+      }
+      unsubscribe = session.subscribe((event) => {
+        const message = getAssistantMessage(event)
+        if (message !== undefined)
+          handleBudgetMessage(
+            session,
+            message,
+            state,
+            budgetNotice,
+            abortSession,
+            hardAbort,
+          )
+      })
+    },
+    budgetStopRequested(): boolean {
+      return state.stopped
+    },
+    waitForBudgetStop(): Promise<void> {
+      return state.abortPromise ?? Promise.resolve()
+    },
+    dispose(): void {
       clearTimeout(timer)
       unsubscribe()
       parent?.removeEventListener('abort', parentAbort)
-      controller.signal.removeEventListener('abort', abort)
+      controller.signal.removeEventListener('abort', onAbort)
     },
   }
 }

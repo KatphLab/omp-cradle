@@ -459,6 +459,7 @@ export class PipelineController {
       collectWaveResults(waveResults, agentResults, bashResults, graphResults)
       markWaveSettled(waveResults, pending, settled)
       options.emitProgress(currentWave, totalWaves)
+      if (waveResults.some((result) => !isSuccessfulNodeResult(result))) break
 
       const controlDecisions = await this.#collectControlDecisions(
         waveResults,
@@ -539,14 +540,14 @@ export class PipelineController {
           result: await promise,
         })),
       )
-      running.delete(completed.nodeName)
-      collectNodeResult(
+      settleStreamingResult(
         completed.result,
+        pending,
+        settled,
         agentResults,
         bashResults,
         graphResults,
       )
-      markNodeSettled(completed.result, pending, settled)
       options.emitProgress(
         Math.max(0, dispatchIndex - 1),
         Math.max(this.#waves.length, dispatchIndex),
@@ -1634,6 +1635,18 @@ function collectNodeResult(
     graphResults.push(nodeResult.result)
   }
 }
+function settleStreamingResult(
+  nodeResult: NodeRunResult,
+  pending: Set<string>,
+  settled: Set<string>,
+  agentResults: SingleResult[],
+  bashResults: BashNodeResult[],
+  graphResults: GraphResult[],
+): void {
+  collectNodeResult(nodeResult, agentResults, bashResults, graphResults)
+  if (!isSuccessfulNodeResult(nodeResult)) pending.clear()
+  markNodeSettled(nodeResult, pending, settled)
+}
 
 function markNodeSettled(
   nodeResult: NodeRunResult,
@@ -1641,7 +1654,7 @@ function markNodeSettled(
   settled: Set<string>,
 ): void {
   pending.delete(nodeResult.name)
-  settled.add(nodeResult.name)
+  if (isSuccessfulNodeResult(nodeResult)) settled.add(nodeResult.name)
 }
 
 function markWaveSettled(
@@ -1651,7 +1664,7 @@ function markWaveSettled(
 ): void {
   for (const result of waveResults) {
     pending.delete(result.name)
-    settled.add(result.name)
+    if (isSuccessfulNodeResult(result)) settled.add(result.name)
   }
 }
 

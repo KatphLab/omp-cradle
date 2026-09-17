@@ -161,14 +161,13 @@ interface SignalDestination {
 
 type SignalGitEnvironment = Record<string, string | undefined>
 
-function signalGitEnvironment(root: string): SignalGitEnvironment {
+function signalGitEnvironment(): SignalGitEnvironment {
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
   )
   Object.assign(environment, {
     LC_ALL: 'C',
     GIT_OPTIONAL_LOCKS: '0',
-    GIT_CEILING_DIRECTORIES: root,
   })
   return environment
 }
@@ -263,7 +262,7 @@ async function assertSignalDestinationUntracked(
   root: string,
   destination: string,
 ): Promise<void> {
-  const environment = signalGitEnvironment(root)
+  const environment = signalGitEnvironment()
   if (!(await assertGitContext(root, environment))) return
   const ownershipProcess = Bun.spawn(
     [

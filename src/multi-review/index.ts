@@ -64,23 +64,42 @@ interface MultiReviewParameters {
 function isReviewRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+function normalizeReviewParameters(
+  params: Record<string, unknown>,
+): MultiReviewParameters {
+  const target = params['target']
+  const acceptanceCriteria = params['acceptanceCriteria']
+  if (typeof target !== 'string' || typeof acceptanceCriteria !== 'string')
+    throw new Error('Review parameters have an invalid shape')
+  const context = params['context']
+  if (context !== undefined && typeof context !== 'string')
+    throw new Error('Review context must be a string')
+  return {
+    target: target.trim(),
+    acceptanceCriteria: acceptanceCriteria.trim(),
+    ...(context === undefined ? {} : { context }),
+  }
+}
 
 function parseMultiReviewParameters(value: unknown): MultiReviewParameters {
   if (!isReviewRecord(value))
     throw new Error('Review parameters must be an object')
   const record = value
-  if (typeof record['target'] !== 'string' || record['target'].length === 0)
+  if (
+    typeof record['target'] !== 'string' ||
+    record['target'].trim().length === 0
+  )
     throw new Error('Review target is required')
   if (
     typeof record['acceptanceCriteria'] !== 'string' ||
-    record['acceptanceCriteria'].length === 0
+    record['acceptanceCriteria'].trim().length === 0
   )
     throw new Error('Review acceptance criteria is required')
   if (record['context'] !== undefined && typeof record['context'] !== 'string')
     throw new Error('Review context must be a string')
   return {
-    target: record['target'],
-    acceptanceCriteria: record['acceptanceCriteria'],
+    target: record['target'].trim(),
+    acceptanceCriteria: record['acceptanceCriteria'].trim(),
     ...(record['context'] === undefined ? {} : { context: record['context'] }),
   }
 }
@@ -279,13 +298,15 @@ export function registerMultiReview(pi: ExtensionAPI): void {
     description:
       'Run three independent read-only reviewers using smol, default, and slow models.',
     parameters: pi.zod.object({
-      target: pi.zod.string().min(1),
-      acceptanceCriteria: pi.zod.string().min(1),
+      target: pi.zod.string().regex(/\S/),
+      acceptanceCriteria: pi.zod.string().regex(/\S/),
       context: pi.zod.string().optional(),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
+      if (!isReviewRecord(params))
+        throw new Error('Review parameters must be an object')
       return executeMultiReview(
-        parseMultiReviewParameters(params),
+        normalizeReviewParameters(params),
         signal,
         ctx.cwd,
         pi.pi.settings,
