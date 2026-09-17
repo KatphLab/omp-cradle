@@ -81,6 +81,7 @@ omp-swarm restart path/to/pipeline.yaml --from review
 
 A swarm is a YAML dependency graph of agent, shell, or nested graph nodes. Runs persist state in the configured workspace, allowing targeted restarts with `--reuse`, `--rerun`, or `--from`.
 
+Agent nodes finish through the native `yield` tool after publishing their required handoffs and control decisions. If an otherwise successful session ends without yielding, the runner requests one final yield under the existing execution limits. Missing yield still fails; model errors, response-length limits and cancellation are not treated as successful completion.
 Use [`src/swarm/dag.schema.json`](./src/swarm/dag.schema.json) for editor validation. Working definitions live in [`src/swarm/sample-graphs`](./src/swarm/sample-graphs), and the bundled [`writing-omp-swarm-dags`](./skills/writing-omp-swarm-dags/SKILL.md) and [`reviewing-omp-swarm-dags`](./skills/reviewing-omp-swarm-dags/SKILL.md) skills document the authoring constraints.
 
 #### Packaged PR review

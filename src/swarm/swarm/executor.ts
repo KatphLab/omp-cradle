@@ -327,14 +327,18 @@ async function driveSession(
   }
 
   await limits.waitForBudgetStop()
-  if (!limits.budgetStopRequested()) return
   limits.signal.throwIfAborted()
-  if (state.yielded) return
+  if (state.yielded || state.stopReason === 'length') return
+  if (
+    state.error !== undefined &&
+    !(limits.budgetStopRequested() && state.stopReason === 'aborted')
+  )
+    return
 
   const forcedYield = buildNamedToolChoice('yield', session.model)
   await awaitAbortable(
     session.prompt(
-      'Your request budget was reached. Stop investigating and yield your final report now.',
+      'Finish this invocation by calling yield with your final report now. Do not investigate further or repeat completed writes. Use {data: ...} for completed work or {error: ...} for a blocker.',
       {
         synthetic: true,
         ...(forcedYield === undefined ? {} : { toolChoice: forcedYield }),
@@ -518,6 +522,9 @@ function buildSystemPrompt(agent: SwarmAgent): string {
   if (agent.extraContext) {
     parts.push(agent.extraContext)
   }
+  parts.push(
+    'Complete your required handoffs and control decisions, then call yield exactly once with {data: ...} containing your final report. If blocked, call yield with {error: ...}. Saving a report or replying with final text does not finish this invocation.',
+  )
   return parts.join('\n\n')
 }
 
