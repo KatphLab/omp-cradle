@@ -4,12 +4,6 @@ import { ModelRegistry } from '@oh-my-pi/pi-coding-agent/config/model-registry'
 import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
-import {
-  persistPrReview,
-  preparePrReview,
-  verifyPrReview,
-  type PrReview,
-} from './review-pr'
 import { loadSwarmDefinitionFile } from './swarm/loader'
 import {
   assertModelRoutingPlanCompatible,
@@ -35,6 +29,11 @@ import {
   createRestartStateTracker,
   loadPersistedModelRoutingPlan,
 } from './swarm/state'
+import {
+  persistPrReview,
+  preparePrReview,
+  type PrReview,
+} from './workflows/review-pr/prepare'
 
 const RUN_DIRECTORY_NAMES = [
   'signals',
@@ -61,16 +60,15 @@ function usageLines(): string[] {
     '       omp-swarm restart <path-to-yaml> [--reuse <nodes>] [--rerun <nodes>] [--from <node>]',
     '       omp-swarm plan-models <path-to-yaml>',
     '       omp-swarm validate <path-to-yaml>',
-    '       omp-swarm review-pr <positive-number> [--validate] [--report-only]',
+    '       omp-swarm review-pr <positive-number> [--validate]',
     '       omp-swarm --help',
     '',
     'Commands:',
     '  restart <path-to-yaml>   Resume from prior state; starts fresh when no state is found',
     '  plan-models <path-to-yaml> Refresh the authenticated catalog and print a model plan without initializing state or running nodes',
     '  validate <path-to-yaml>  Validate a swarm YAML file without running it',
-    '  review-pr <number>       Review the current GitHub PR head from a clean checkout',
+    '  review-pr <number>       Report findings on the current PR head; never changes source',
     '                           --validate renders and validates without writes, auth, or models',
-    '                           --report-only reports findings without changing source (default: fix)',
     '',
     'Run workspace:',
     '  Creates signals/, tracking/, reports/, and output/ before execution',
@@ -180,9 +178,6 @@ try {
     cliArguments.length > (isValidateCommand || isPlanModelsCommand ? 2 : 1)
   ) {
     throw new Error('Restart options are only valid with the restart command')
-  }
-  if (isReviewPrCommand && review !== undefined && !review.validate) {
-    await verifyPrReview(review)
   }
   const swarmDefinition =
     review?.definition ?? (await loadSwarmDefinitionFile(resolvedPath))

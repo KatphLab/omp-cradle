@@ -22,8 +22,8 @@ import { buildNamedToolChoice } from '@oh-my-pi/pi-coding-agent/utils/tool-choic
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { createMultiReviewTool } from '../../multi-review'
-import { createReviewReportTool } from '../review-report-tool'
 import { createSwarmSignalTools } from '../signal-tools'
+import { createReviewReportTool } from '../workflows/review-pr/report-tool'
 import type { SwarmAgent } from './schema'
 import {
   CONTROL_DECISION_TOOL_NAME,

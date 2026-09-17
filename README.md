@@ -85,45 +85,40 @@ Use [`src/swarm/dag.schema.json`](./src/swarm/dag.schema.json) for editor valida
 
 #### Packaged PR review
 
-The standalone CLI includes a single-pass PR workflow (not a `/swarm review-pr` extension command):
+The standalone CLI reviews a PR without modifying source:
 
 ```bash
 omp-swarm review-pr 195 --validate
 omp-swarm review-pr 195
-omp-swarm review-pr 195 --report-only
-omp-swarm review-pr 195 --report-only --validate
 ```
 
-Use a positive PR number. `--validate` checks the selected mode's graph locally and offline: no authentication, GitHub or agent calls, or file writes. To run either mode, authenticate GitHub CLI (`gh auth login`) and start in the current repository with a clean working tree, including untracked source files, already at the open PR's HEAD. The command uses the repository root; it does not check out a branch or create a worktree.
+`--validate` renders and validates the graph offline, without authentication, GitHub requests, agent calls or file writes. To run a review, authenticate `gh` and start in a clean checkout of the open PR head, including untracked files. The CLI resolves the canonical repository, captures GitHub identity and the local commit diff, and rechecks identity before publishing frozen evidence. It never fetches or checks out a branch.
 
-Complementary correctness and simplicity reviews each call `multi_review` once for three independent subreviews using `pi/smol`; adjudication consolidates their findings. Swarm-provided `multi_review` inherits the node model rather than selecting different model roles. By default, adjudication feeds one implementer, verification, and independent acceptance. There are no automatic correction loops. Fixes remain as uncommitted local changes; the workflow does not post comments, commit, merge, or push.
+The graph is `correctness + simplicity → adjudicate`: two direct independent reviewers, then one consolidator. All three use `pi/smol`; there are no nested reviewers, implementation stages or automatic repair loops. Reviewers inspect source but do not run project checks. Fixing findings is a separate, explicitly requested task. The obsolete `--report-only` flag is removed because every review is now report-only.
 
-Both review stages call `multi_review` directly, without `eval`, `bash` or general `write` access. They rely on validated frozen Git evidence and save only their own YAML report through `write_review_report`, which validates its envelope against freeze and reads it back from disk. Reviewers then read the saved report to verify coverage, attribution and original reports; unavailable tools or incomplete reviewer coverage block the stage. Other stages retain Git checks and Bun report read-back.
+The CLI owns `.omp-swarm/review-pr-195/run/freeze.yaml` (identity and changed paths) and `pr.patch`. Agents publish Markdown through `write_review_report`, which attaches frozen identity, checks current HEAD and source cleanliness, safely writes the node-specific YAML, and reads it back. Consolidation requires both upstream reviews to be READY with the same identity. It preserves reviewer attribution and disagreements and publishes `run/findings.md` with COMPLETE or BLOCKED status. COMPLETE means the review finished, not that the PR is safe to merge. No fixes or post-fix verification are performed.
 
-Final acceptance assesses published `run/` handoffs and permitted source, using the reviewer originals and check evidence embedded in those handoffs. It must not retrieve `history://`, `agent://`, session transcripts, or runtime-owned artifacts to verify provenance. Missing or contradictory evidence blocks acceptance and identifies the responsible producer; it does not authorize runtime reads.
+Fresh invocation refuses existing review or runtime artifacts rather than replacing evidence. Existing generated workflows are not migrated. Use a separate clean checkout for a fresh review; never blindly delete old evidence. Restarting a new-format generated workflow reruns all three agents against its frozen PR snapshot, not fresh remote metadata. Changed local HEAD/source blocks publication; for a newer PR revision start a fresh review.
 
-Each `multi_review` invocation uses a fresh UUID prefix for its runtime reviewer IDs while preserving stable reviewer/model attribution, so concurrent and repeated calls do not share reviewer sessions. Every agent reads back and validates its written report before completing, including nested `identity.run_id` and node-specific evidence. Freeze serializes full command-captured OIDs without transcription and compares saved identities directly against fresh Git/PR command results. It validates its patch/path listing and manifest before signaling success and may correct its own drafts before that signal. Non-reviewer stages inspect Git status/diffs and owned paths rather than custom checksums or source fingerprints. Published freeze evidence is not corrected while reviews are running: invalid evidence blocks and requires an explicitly authorized fresh attempt.
+Agents must not inspect runtime state or session transcripts, delegate, access secrets/network, or alter source. Restricted native sessions retain the configured approval policy and execution limits. Report writes reject tracked destinations and symlinks using the existing safe writer, which requires Linux `/proc/self/fd`; this is not a general filesystem sandbox.
 
-Fix-mode plans execute the exact complete published checks before publication, including fixture creation, real operations, observable acceptance assertions and cleanup with variables in the same executable scope. Checks cover every material requirement, including security negative cases, rather than mock shapes. Setup or cleanup failure blocks publication; an expected pre-fix behavioral failure does not. Disposable fixtures and cleanup stay inside a unique repository-local root. A fixture may initialize its own Git repository and index using sanitized child Git configuration/environment and asserted repository ownership, but may never borrow or mutate the project index, commit, run hooks, or use the network. Verification independently reruns the exact published commands against a READY implementation.
+### Workflow source layout
 
-All review stages and nested reviewers use `pi/smol`, resolved through your configured OMP model role. The implementation contract requires fresh native `createAgentSession` sessions with restricted tools, `createSubagentSettings` approval policy and bounded execution. SDK patches, disabling `restrictToolNames` or replacing native sessions with `runSubprocess` are forbidden.
+Packaged workflows live under `src/swarm/workflows/<name>/`. Keep each DAG and its workflow-specific TypeScript together:
 
-`--report-only` ends at adjudication, skipping implementation, verification, and acceptance without source edits. It writes `.omp-swarm/review-pr-195/run/findings.md` with consolidated evidence, severity, reviewer disagreements, and recommendations. Findings are not auto-fixed, and the report is not merge acceptance.
-
-Both modes use the same generated graph path, `.omp-swarm/review-pr-195/workflow.yaml`, so they cannot coexist there: fresh invocation refuses an existing graph or runtime entry rather than overwriting it. The default mode's final report remains `.omp-swarm/review-pr-195/run/acceptance.md`. Signal writes/removals and scoped review-report writes reject tracked destinations and traverse retained directory handles without following symlinks. These operations require Linux `/proc/self/fd`; other runtime artifact paths are not a filesystem sandbox. Native swarm sessions honor `task.maxRuntimeMs` and stop at 1.5 times `task.softRequestBudget` (zero disables each limit); request-limit termination fails the node rather than accepting a partial result.
-
-For an unchanged safe plan, an operator may restart fix mode at `implementer`; it rechecks remote PR identity even for a no-change result. To repair the plan or its check prerequisites while retaining partial fixes, first explicitly authorize same-identity replanning in the generated `adjudicate` task, naming the exact frozen `run_id` and `head`. No authorization is present by default. The entire unstaged delta must match prior recorded source evidence within prior ownership; unrelated edits, staging or unevidenced untracked bytes block recovery. Adjudicate alone archives existing plan/implementation/verification/acceptance reports under a unique `run/recovery-<uuid>/` before replacement and links the archive and retained delta in the successor plan; frozen PR and review evidence stay unchanged.
-
-`--from` selects a restart suffix, not guaranteed upstream reuse: strict definition/version drift or other resume invalidation may rerun upstream stages. Those stages preserve frozen identity and review evidence during authorized recovery; they cannot freeze a new identity over dirty source. Report-only restarts must start at `freeze` for fresh remote identity validation. Any route bypassing implementer likewise requires freeze to rerun. Workflow/documentation edits are not automatically attributable PR fixes, so updating this workflow does not make the current tree restart-ready.
-
-```bash
-# Fix mode: unchanged safe plan
-omp-swarm restart .omp-swarm/review-pr-195/workflow.yaml --from implementer
-# Fix mode: only after recording explicit same-identity replanning authorization
-omp-swarm restart .omp-swarm/review-pr-195/workflow.yaml --from adjudicate
-# Report-only: fresh identity validation required
-omp-swarm restart .omp-swarm/review-pr-195/workflow.yaml --from freeze
+```text
+src/swarm/
+  cli.ts                       # CLI command dispatch
+  swarm/                       # Shared DAG execution runtime
+  signal-tools.ts              # Shared control/repeat tools
+  workflows/
+    review-pr/
+      workflow.yaml            # DAG template
+      prepare.ts               # CLI preparation and PR preflight
+      report-tool.ts           # PR-specific report publication
 ```
+
+Add a sibling directory for another workflow; include helpers only when needed. Load templates relative to their module with `import.meta.url`. Keep workflow-specific checks and tools in that directory, and wire any CLI command or custom tool explicitly at the existing CLI/executor integration points. Shared execution primitives stay in `swarm/`; generated run artifacts remain under `.omp-swarm/`, separate from packaged source.
 
 ## Development
 
