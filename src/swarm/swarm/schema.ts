@@ -1077,7 +1077,8 @@ function validateControl(
 export function isSafeRelativePath(value: string): boolean {
   if (value.trim().length === 0) return false
   if (value.startsWith('/')) return false
-  return !value.split(/[\\/]+/).includes('..')
+  const components = new Set(value.split(/[\\/]+/))
+  return !components.has('..') && !components.has('.git')
 }
 
 function validateTargetCount(
