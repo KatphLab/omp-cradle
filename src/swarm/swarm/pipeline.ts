@@ -540,6 +540,7 @@ export class PipelineController {
           result: await promise,
         })),
       )
+      running.delete(completed.nodeName)
       settleStreamingResult(
         completed.result,
         pending,

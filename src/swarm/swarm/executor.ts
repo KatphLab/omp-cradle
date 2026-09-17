@@ -263,7 +263,20 @@ function subscribeSession(
   return session.subscribe((event) => {
     if (event.type === 'message_end' && event.message.role === 'assistant')
       updateAssistantResult(event.message, progress, state)
-    if (isSuccessfulYieldEvent(event)) state.yielded = true
+    if (
+      event.type === 'tool_execution_end' &&
+      event.toolName === 'yield' &&
+      !event.isError
+    ) {
+      const details = getSuccessfulYieldResult(event.result)
+      if (details !== undefined) {
+        state.output =
+          typeof details.data === 'string'
+            ? details.data
+            : JSON.stringify(details.data, undefined, 2)
+        state.yielded = true
+      }
+    }
     if (session.model !== undefined)
       progress.resolvedModel = `${session.model.provider}/${session.model.id}`
     progress.durationMs = Date.now() - started
@@ -284,7 +297,7 @@ function updateAssistantResult(
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('\n')
-  if (text.length > 0)
+  if (!state.yielded && text.length > 0)
     state.output += state.output.length > 0 ? `\n${text}` : text
   state.stopReason = message.stopReason
   state.error =
@@ -293,23 +306,22 @@ function updateAssistantResult(
       : undefined
 }
 
-function isSuccessfulYieldEvent(event: AgentSessionEvent): boolean {
-  if (
-    event.type !== 'tool_execution_end' ||
-    event.toolName !== 'yield' ||
-    event.isError
-  )
-    return false
-  const result: unknown = event.result
+function getSuccessfulYieldResult(
+  result: unknown,
+): { data: unknown } | undefined {
   if (typeof result !== 'object' || result === null || !('details' in result))
-    return false
+    return undefined
   const details = result.details
-  return (
-    typeof details === 'object' &&
-    details !== null &&
-    'status' in details &&
-    details.status === 'success'
+  if (
+    typeof details !== 'object' ||
+    details === null ||
+    !('status' in details) ||
+    details.status !== 'success' ||
+    !('data' in details) ||
+    details.data === undefined
   )
+    return undefined
+  return details
 }
 
 async function driveSession(
