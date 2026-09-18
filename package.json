@@ -39,9 +39,10 @@
     "typescript-eslint": "^8.58.1"
   },
   "peerDependencies": {
-    "@oh-my-pi/pi-ai": "^18.1.17",
-    "@oh-my-pi/pi-catalog": "^18.1.17",
-    "@oh-my-pi/pi-coding-agent": "^18.1.17"
+    "@oh-my-pi/pi-ai": "^18.2.5",
+    "@oh-my-pi/pi-catalog": "^18.2.5",
+    "@oh-my-pi/pi-coding-agent": "^18.2.5",
+    "@oh-my-pi/pi-tui": "^18.2.5"
   },
   "omp": {
     "extensions": [

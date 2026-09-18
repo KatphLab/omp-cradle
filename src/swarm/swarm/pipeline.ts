@@ -1,6 +1,6 @@
 import type { ModelRegistry } from '@oh-my-pi/pi-coding-agent/config/model-registry'
 import type { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
-import type { SingleResult } from '@oh-my-pi/pi-coding-agent/task/types'
+import type { SingleResult } from '@oh-my-pi/pi-tui/tools/task'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { executeSwarmBashNode, type BashNodeResult } from './bash-node-executor'

@@ -3,19 +3,15 @@ import type {
   CustomToolContext,
   ExtensionAPI,
 } from '@oh-my-pi/pi-coding-agent'
-import {
-  formatModelSelectorValue,
-  resolveModelOverride,
-} from '@oh-my-pi/pi-coding-agent/config/model-resolver'
+import { resolveModelOverride } from '@oh-my-pi/pi-coding-agent/config/model-resolver'
 import { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
 import {
   runSubprocess,
   type ExecutorOptions,
 } from '@oh-my-pi/pi-coding-agent/task/executor'
-import type {
-  AgentDefinition,
-  SingleResult,
-} from '@oh-my-pi/pi-coding-agent/task/types'
+import type { AgentDefinition } from '@oh-my-pi/pi-coding-agent/task/types'
+import { formatModelSelectorValue } from '@oh-my-pi/pi-tui/overlays/model-selector'
+import type { SingleResult } from '@oh-my-pi/pi-tui/tools/task'
 import { randomUUID } from 'node:crypto'
 
 const synthesisInstructions =

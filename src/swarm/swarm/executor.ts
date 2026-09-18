@@ -14,11 +14,8 @@ import {
   createSubagentSettings,
   resolveSoftRequestBudget,
 } from '@oh-my-pi/pi-coding-agent/task/executor'
-import type {
-  AgentProgress,
-  SingleResult,
-} from '@oh-my-pi/pi-coding-agent/task/types'
 import { buildNamedToolChoice } from '@oh-my-pi/pi-coding-agent/utils/tool-choice'
+import type { AgentProgress, SingleResult } from '@oh-my-pi/pi-tui/tools/task'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { createMultiReviewTool } from '../../multi-review'

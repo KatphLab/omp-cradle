@@ -19,7 +19,7 @@ A local [Oh My Pi](https://github.com/can1357/oh-my-pi) extension package for pr
 
 - [Bun](https://bun.sh) 1.3.14
 - Node.js 24
-- An OMP installation compatible with `@oh-my-pi/pi-coding-agent` ^18.1.17
+- An OMP installation compatible with `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui` ^18.2.5
 
 ## Setup
 
