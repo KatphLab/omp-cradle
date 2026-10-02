@@ -10,7 +10,7 @@ import {
   type ExecutorOptions,
 } from '@oh-my-pi/pi-coding-agent/task/executor'
 import type { AgentDefinition } from '@oh-my-pi/pi-coding-agent/task/types'
-import { formatModelSelectorValue } from '@oh-my-pi/pi-tui/overlays/model-selector'
+import type { formatModelSelectorValue } from '@oh-my-pi/pi-tui/overlays/model-selector'
 import type { SingleResult } from '@oh-my-pi/pi-tui/tools/task'
 import { randomUUID } from 'node:crypto'
 
@@ -125,10 +125,10 @@ function reviewerModelSelector(
   result: ReviewerModel,
   thinkingLevel: Parameters<typeof formatModelSelectorValue>[1],
 ): string {
-  return formatModelSelectorValue(
-    `${result.provider}/${result.id}`,
-    thinkingLevel,
-  )
+  const selector = `${result.provider}/${result.id}`
+  return thinkingLevel && thinkingLevel !== 'inherit'
+    ? `${selector}:${thinkingLevel}`
+    : selector
 }
 
 function buildReviewersReport(

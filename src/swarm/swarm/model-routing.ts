@@ -11,6 +11,10 @@ import {
 } from '@oh-my-pi/pi-coding-agent/config/model-resolver'
 import { MODEL_ROLE_IDS } from '@oh-my-pi/pi-coding-agent/config/model-roles'
 import type { Settings } from '@oh-my-pi/pi-coding-agent/config/settings'
+import {
+  cfgRetryEnabled,
+  cfgRetryMaxRetries,
+} from '@oh-my-pi/pi-coding-agent/session/settings'
 import { buildDependencyGraph, collectTransitiveDependents } from './dag'
 import type {
   ModelRoutingQuality,
@@ -205,8 +209,8 @@ export function buildModelRoutingPlan(options: {
   const nodes: ModelRoutingNodePlan[] = []
   const subtreeEstimatedCostUsd: Record<string, number> = {}
   const planningErrors: string[] = []
-  const providerAttempts = settings.get('retry.enabled')
-    ? 1 + Math.max(0, Math.trunc(settings.get('retry.maxRetries')))
+  const providerAttempts = cfgRetryEnabled.get(settings)
+    ? 1 + Math.max(0, Math.trunc(cfgRetryMaxRetries.get(settings)))
     : 1
   const availableModels = modelRegistry.getAvailable()
   const seenPaths = new Set<string>()

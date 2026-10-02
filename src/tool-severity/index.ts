@@ -170,15 +170,18 @@ function registerEditSeverityTool(
     parameters: nativeEdit.parameters,
     approval(input): ToolApprovalDecision {
       const deletion = getEditDeletion(input)
+      let decision: ToolApprovalDecision
       if (deletion === undefined || !state.promptsEnabled) {
-        return { tier: nativeEdit.approval(input) }
+        decision = nativeEdit.approval(input)
+      } else {
+        const severity = deletion.deletionCount === 1 ? 'high' : 'critical'
+        decision = {
+          tier: 'write',
+          policy: 'prompt',
+          reason: `${severity}-severity file deletion`,
+        }
       }
-      const severity = deletion.deletionCount === 1 ? 'high' : 'critical'
-      return {
-        tier: 'write',
-        policy: 'prompt',
-        reason: `${severity}-severity file deletion`,
-      }
+      return decision
     },
     async execute(_toolCallId, parameters, signal, onUpdate, context) {
       if (context.invokeTool === undefined) {

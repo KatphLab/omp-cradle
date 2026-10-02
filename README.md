@@ -19,7 +19,9 @@ A local [Oh My Pi](https://github.com/can1357/oh-my-pi) extension package for pr
 
 - [Bun](https://bun.sh) 1.3.14
 - Node.js 24
-- An OMP installation compatible with `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui` ^18.2.5
+- An OMP installation compatible with `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui` ^18.4.10
+
+Keep the OMP SDK peers aligned to avoid duplicate, incompatible types. The TUI peer is updated to 18.4.10 to match the coding-agent SDK; it remains MIT-licensed and adds no integration or permission requirements.
 
 ## Setup
 
@@ -31,6 +33,8 @@ omp plugin link .
 ```
 
 Start a new OMP session to load the linked package. During extension development, run `/reload-plugins` in an existing session after changing source files.
+
+Council and Swarm support the compiled OMP 18.4.10 startup loader without importing the model-selector overlay at runtime. Reviewer selectors still preserve explicit thinking levels and omit the inherited suffix.
 
 To load the checkout for one session without linking it:
 
