@@ -1,4 +1,5 @@
 import type {
+  BashToolInput,
   ExtensionAPI,
   ExtensionContext,
   ToolApprovalDecision,
@@ -203,70 +204,75 @@ function registerBashSeverityTool(
   pi: ExtensionAPI,
   state: ToolSeverityState,
 ): void {
+  const nativeBash = new pi.pi.BashTool({
+    cwd: process.cwd(),
+    hasUI: false,
+    getSessionFile: () => '',
+    getSessionSpawns: () => '',
+    settings: pi.pi.settings,
+  })
+  const nativeBashMetadata = {
+    concurrency: nativeBash.concurrency,
+    readsSkillUris: nativeBash.readsSkillUris,
+    strict: nativeBash.strict,
+    loadMode: 'essential' as const,
+    approval: nativeBash.approval,
+    formatApprovalDetails: nativeBash.formatApprovalDetails,
+  }
+
   pi.registerTool({
-    name: 'bash',
-    label: 'Bash',
-    description:
-      'Execute a bash command in the current working directory. Every command must declare its severity: low for read-only inspection, medium for reversible local changes, high for destructive or externally visible changes, or critical for broadly destructive commands, remote code execution, or secret exposure. High and critical commands require explicit user confirmation. A command rejected by the user remains blocked for this session and must not be retried with a different severity.',
-    parameters: pi.zod.object({
-      command: pi.zod.string().describe('The shell command to execute'),
-      severity: pi.zod.enum(SEVERITIES).describe('Command severity'),
-    }),
-    approval: 'exec',
+    ...nativeBashMetadata,
+    name: nativeBash.name,
+    label: nativeBash.label,
+    get description() {
+      return `${nativeBash.description}\n\nEvery command must declare its severity: low for read-only inspection, medium for reversible local changes, high for destructive or externally visible changes, or critical for broadly destructive commands, remote code execution, or secret exposure. High and critical commands require explicit user confirmation. A command rejected by the user remains blocked for this session and must not be retried with a different severity.`
+    },
+    get parameters() {
+      return nativeBash.parameters.and({
+        severity: pi.arktype
+          .enumerated(...SEVERITIES)
+          .describe('Command severity'),
+      })
+    },
     async execute(
       _toolCallId,
-      parameters: { command: string; severity: BashSeverity },
+      parameters: BashToolInput & { severity: BashSeverity } & Record<
+          string,
+          unknown
+        >,
       signal,
-      _onUpdate,
+      onUpdate,
       context,
     ) {
-      try {
-        const rejectionMessage = await getRejectionMessage(
-          context,
-          parameters.command,
-          parameters.severity,
-          state.rejected,
-          state.promptsEnabled,
-        )
-        if (rejectionMessage !== undefined) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: rejectionMessage,
-              },
-            ],
-            details: {
-              severity: parameters.severity,
-              blocked: true,
-            },
-          }
-        }
-
-        const result = await pi.exec('bash', ['-lc', parameters.command], {
-          ...(signal === undefined ? {} : { signal }),
-        })
-        const output =
-          [result.stdout.trimEnd(), result.stderr.trimEnd()]
-            .filter((text) => text.length > 0)
-            .join('\n') || '(no output)'
-        const failed = result.code !== 0 || result.killed
-        const text = failed
-          ? `${output}\n\nCommand failed with exit code ${result.code}`
-          : output
-
+      if (context.invokeTool === undefined) {
+        throw new Error('Native bash tool is unavailable')
+      }
+      const rejectionMessage = await getRejectionMessage(
+        context,
+        parameters.command,
+        parameters.severity,
+        state.rejected,
+        state.promptsEnabled,
+      )
+      if (rejectionMessage !== undefined) {
         return {
-          content: [{ type: 'text' as const, text }],
+          content: [
+            {
+              type: 'text' as const,
+              text: rejectionMessage,
+            },
+          ],
           details: {
             severity: parameters.severity,
-            exitCode: result.code,
-            killed: result.killed,
+            blocked: true,
           },
-          ...(failed ? { isError: true } : {}),
         }
-      } catch (error_) {
-        throw error_ instanceof Error ? error_ : new Error(String(error_))
       }
+
+      return context.invokeTool(parameters, {
+        ...(signal === undefined ? {} : { signal }),
+        ...(onUpdate === undefined ? {} : { onUpdate }),
+      })
     },
   })
 }
