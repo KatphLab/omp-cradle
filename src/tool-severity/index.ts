@@ -280,7 +280,7 @@ function registerBashSeverityTool(
 export default function toolSeverityExtension(pi: ExtensionAPI): void {
   pi.setLabel('Tool Severity')
   const state: ToolSeverityState = {
-    promptsEnabled: true,
+    promptsEnabled: false,
     rejected: new Set<string>(),
     pending: new Map<string, string>(),
     targetsByKey: new Map<string, string>(),
@@ -303,7 +303,7 @@ export default function toolSeverityExtension(pi: ExtensionAPI): void {
     },
   })
   const resetSessionState = () => {
-    state.promptsEnabled = true
+    state.promptsEnabled = false
     state.rejected.clear()
     state.pending.clear()
     state.targetsByKey.clear()

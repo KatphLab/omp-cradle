@@ -58,7 +58,7 @@ omp --extension .
 
 Use `/i-have-adhd [on|off|stop]` to toggle ADHD-friendly output for the current session. It is off by default; pass `--adhd` when starting OMP to enable it. The mode persists across session branches and is restored after compaction. Saying "stop adhd mode" or "normal mode" disables it.
 
-Use `/tool-severity off` to suppress severity confirmation prompts for the current session. Native approval policies remain active. Use `/tool-severity on` to restore severity prompts; they reset to enabled when switching or branching sessions.
+Use `/tool-severity off` to suppress severity confirmation prompts for the current session. Native approval policies remain active. Use `/tool-severity on` to enable severity prompts.
 
 `/multi-review` and the agent-callable `multi_review` tool only provide model diversity when the `pi/smol`, `pi/default`, and `pi/slow` roles resolve to different models. Configure those roles in `/model` → **Roles**.
 
